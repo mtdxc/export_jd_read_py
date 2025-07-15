@@ -13,7 +13,7 @@ config = pdfkit.configuration(
 options = {"enable-local-file-access": None}  # 允许访问本地文件
 
 
-#TODO 目录根据导出json设置目录
+# TODO 目录根据导出json设置目录
 def merge_pdfs_with_bookmarks(pdf_files, output_file):
     """
     合并多个 PDF 文件，并使用单个 PDF 文件的书签。
@@ -43,7 +43,7 @@ def merge_pdfs_with_bookmarks(pdf_files, output_file):
                     # 添加书签（页码需要加上偏移量）
                     last_bookmark = writer.add_outline_item(
                         title=bookmark.title,
-                        page_number=bookmark.page + total_pages,
+                        page_number=reader.get_destination_page_number(bookmark) + total_pages,
                         parent=parent,
                     )
 
@@ -78,11 +78,22 @@ def bookToPdf(name, folder):
         jsonArray = json.load(f)
     pdfs = []
     last_chapter_item = ""
+    last_chapter_content = ""
     for i, it in enumerate(jsonArray):
         chapter_item = it["chapter_item"]  # +".html"
         if chapter_item != last_chapter_item:
             html_path = os.path.join(html_folder, chapter_item)
             pdf_path = os.path.join(pdf_folder, f"{chapter_item}.pdf")
+
+            #有的html内容一样,但是文件名不同,导致相同pdf生成
+            with open(html_path,encoding='utf-8') as file:
+                chapter_content = file.read()
+                if chapter_content == last_chapter_content:
+                    print(f"{i+1}/{len(jsonArray)} 内容相同,跳过")
+                    continue
+                last_chapter_content = chapter_content
+                
+
             # try:
             pdfkit.from_file(html_path, pdf_path, configuration=config, options=options)
             # except Exception as e:
