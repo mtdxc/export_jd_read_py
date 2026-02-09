@@ -10,19 +10,14 @@ def getHtmlAsset(folder, filename, filePath, info, checkSet: set):
     with open(filePath, "r", encoding="utf-8") as file_W:
         content = file_W.read()
 
+    bak_folder = os.path.join(folder, "bak")
+    if not os.path.exists(bak_folder):
+        os.makedirs(bak_folder)
+
     pattern = r"https:\/\/\w+\.360buyimg\.com\/([^\"]+\.\w+)"
     # 找到所有匹配的地址
     matches = re.findall(pattern, content)
     if matches:
-        # 备份原始html
-        bak_folder = os.path.join(folder, "bak")
-        if not os.path.exists(bak_folder):
-            os.makedirs(bak_folder)
-        with open(
-            os.path.join(bak_folder, filename), "w", encoding="utf-8"
-        ) as file_bak:
-            file_bak.write(content)
-
         def replacer(match):
             file_name = "asset/" + match.group(1).replace("/", "-")
 
@@ -39,9 +34,14 @@ def getHtmlAsset(folder, filename, filePath, info, checkSet: set):
             return f"./{file_name}"
 
         # 替换地址为新的 URL
-        content = re.sub(pattern, replacer, content)
-        with open(filePath, "w", encoding="utf-8") as file_W:
-            file_W.write(content)
+        newcontent = re.sub(pattern, replacer, content)
+        if newcontent != content:
+            print(f"处理文件:{filePath} 替换了{len(matches)}个链接")
+            # 备份原始html
+            with open(os.path.join(bak_folder, filename), "w", encoding="utf-8") as file_bak:
+                file_bak.write(content)
+            with open(filePath, "w", encoding="utf-8") as file_W:
+                file_W.write(newcontent)
 
 
 def getBookAsset(folder, info):

@@ -2,3 +2,5 @@ selenium
 requests
 pdfkit
 PyPDF2
+markdownify
+html2text
