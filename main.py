@@ -18,11 +18,9 @@ Download_Book_List = [30751446]
 def save_session(driver, file_path):
     """保存 Local Storage 和 Cookies"""
     session_data = {
-        "local_storage": driver.execute_script("return JSON.stringify(localStorage);"),
-        "session_storage": driver.execute_script(
-            "return JSON.stringify(sessionStorage);"
-        ),
-        "cookies": driver.get_cookies(),
+        "local_storage"     : driver.execute_script("return JSON.stringify(localStorage);"),
+        "session_storage"   : driver.execute_script("return JSON.stringify(sessionStorage);"),
+        "cookies"           : driver.get_cookies(),
     }
     with open(file_path, "w", encoding="utf-8") as file:
         json.dump(session_data, file, ensure_ascii=False, indent=4)
@@ -104,13 +102,9 @@ def save_catalog(driver: webdriver.Chrome, bookId, outputDir):
         navPoint = it["nav_point"]
         navPointHtml = "" if navPoint == "" else f"#{navPoint}"
         if level == 0:
-            lis.append(
-                f"""<li><a href="./Data/{it["chapter_item"]}{navPointHtml}">{it["chapter_name"]}</a></li>"""
-            )
+            lis.append(f"""<li><a href="./Data/{it["chapter_item"]}{navPointHtml}">{it["chapter_name"]}</a></li>""")
         else:
-            lis.append(
-                f"""<li style="text-indent: {level}em;"><a href="./Data/{it["chapter_item"]}{navPointHtml}">{it["chapter_name"]}</a></li>"""
-            )
+            lis.append(f"""<li style="text-indent: {level}em;"><a href="./Data/{it["chapter_item"]}{navPointHtml}">{it["chapter_name"]}</a></li>""")
 
     html = f"""
         <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN">
@@ -135,9 +129,7 @@ def save_catalog(driver: webdriver.Chrome, bookId, outputDir):
 
 def save_page(driver: webdriver.Chrome, filepath):
     element = WebDriverWait(driver, 300).until(
-        EC.presence_of_element_located(
-            (By.CLASS_NAME, "reader-chapter-content")
-        )  # 替换为实际的定位方式
+        EC.presence_of_element_located((By.CLASS_NAME, "reader-chapter-content"))  # 替换为实际的定位方式
     )
     # element = driver.find_element(By.CLASS_NAME, "reader-chapter-content")
     element_html = element.get_attribute("outerHTML")
@@ -217,20 +209,39 @@ def downloadBook(bookIndex, bookCount, driver: webdriver.Chrome, bookId):
 
     catalog = save_catalog(driver, bookId, outputDir)
 
+    # 统计已下载的章节
+    downloaded_chapters = set()
+    for it in catalog:
+        chapter_item = it["chapter_item"]
+        savePath = f"{outputDataDir}/{chapter_item}"
+        if os.path.exists(savePath):
+            downloaded_chapters.add(chapter_item)
+
+    total_unique_chapters = len(set([it["chapter_item"] for it in catalog]))
+    already_downloaded = len(downloaded_chapters)
+    if already_downloaded > 0:
+        print(f"检测到已下载 {already_downloaded}/{total_unique_chapters} 个章节，继续下载剩余章节...")
+
     last_chapter_item = ""
+    downloaded_count = already_downloaded
     for it in catalog:
         index = it["chapter_index"]
         id = it["chapter_id"]
         chapter_item = it["chapter_item"]
         if chapter_item != last_chapter_item:
-            driver.get(
-                f"https://e-m.jd.com/reader/?ebookId={bookId}&index={index}&from=3"
-            )
             savePath = f"{outputDataDir}/{chapter_item}"
-            save_page(driver, savePath)
+
+            # 断点续下：检查文件是否已存在
+            if os.path.exists(savePath):
+                print(f"{bookIndex+1}/{bookCount} 跳过已下载:{index+1}/{len(catalog)} - {chapter_item}")
+            else:
+                driver.get(f"https://e-m.jd.com/reader/?ebookId={bookId}&index={index}&from=3")
+                save_page(driver, savePath)
+                downloaded_count += 1
+                print(f"{bookIndex+1}/{bookCount} 保存:{index+1}/{len(catalog)} ({downloaded_count}/{total_unique_chapters}) - {chapter_item}")
+
             last_chapter_item = chapter_item
-        print(f"{bookIndex+1}/{bookCount} 保存:{index+1}/{len(catalog)}")
-    print(f"下载成功:{title}")
+    print(f"下载成功:{title} (共 {total_unique_chapters} 个章节)")
 
 
 
