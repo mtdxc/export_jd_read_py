@@ -7,7 +7,7 @@ Data_Folder = "./output"
 
 # pdfkit需要安装wkhtmltopdf
 config = pdfkit.configuration(
-    wkhtmltopdf="D:/Program Files/wkhtmltopdf/bin/wkhtmltopdf.exe"
+    wkhtmltopdf="C:/Program Files/wkhtmltopdf/bin/wkhtmltopdf.exe"
 )
 # 添加 wkhtmltopdf 配置选项
 options = {"enable-local-file-access": None}  # 允许访问本地文件
