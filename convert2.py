@@ -1,11 +1,20 @@
 import re
 import subprocess
 import sys
+import os
+from ZaiOcr import ZaiOcr
 
-def extract_image_path(text):
-    # 匹配 Markdown 图片路径
-    match = re.search(r'代码如下：\n\n!\[\]\(([^)]+)\)', text, re.MULTILINE)
-    return match.group(1) if match else None
+ASSET_DIR = 'asset'
+IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'}
+def find_asset_files(asset_dir):
+    asset_files = []
+    for root, _, files in os.walk(asset_dir):
+        for f in files:
+            ext = os.path.splitext(f)[1].lower()
+            if ext in IMAGE_EXTENSIONS:
+                asset_files.append(os.path.join(root, f))
+    print(f"Found {len(asset_files)} asset files.")
+    return asset_files
 
 def run_ocr(image_path):
     # 调用 doskey ocr 命令
@@ -34,6 +43,8 @@ if __name__ == "__main__":
         sys.exit(1)
     
     md_file_path = sys.argv[1]
+    chdir = os.path.dirname(md_file_path)
+    os.chdir(chdir)  # 切换到 Markdown 文件所在目录，确保图片
     md_out_path = 'output.md'  # 请根据实际文件名修改
     if len(sys.argv) >= 3:
         md_out_path = sys.argv[2]
@@ -41,19 +52,27 @@ if __name__ == "__main__":
     imgs = []
     with open(md_file_path, 'r', encoding='utf-8') as f:
         snippet = f.read()
-        imgs = re.findall(r'代码如下：\n\n!\[\]\(([^)]+)\)', snippet, re.MULTILINE)
+        imgs = re.findall(r'!\[\]\(([^)]+)\)', snippet, re.MULTILINE)
         imgs = list(set(imgs))  # 去重图片路径
-    total = len(imgs)
-    for idx in range(total):
-        img = imgs[idx]
-        print(f"正在处理图片 {idx+1}/{total}: {img}")
-        ocr_text = run_ocr(img)
-        if len(ocr_text) > 0:
-            if not ocr_text.startswith('```'):
-                ocr_text = '```\n' + ocr_text  # 添加代码块开始标记
-            if not ocr_text.endswith('```'):
-                ocr_text += '\n```'  # 添加代码块结束标记
-            snippet = replace_image_with_text(snippet, img, ocr_text)
 
+    total = len(imgs)
+    if total == 0:
+        print("未找到任何图片链接。")
+        sys.exit(0)
+        
     with open(md_out_path, 'w', encoding='utf-8') as f:
+        ocr = ZaiOcr()
+        for idx in range(total):
+            img = imgs[idx]
+            print(f"正在处理图片 {idx+1}/{total}: {img}")
+            try:
+                ocr_text = ocr.ocr_code(img)
+                if ocr_text and len(ocr_text) > 0:
+                    snippet = replace_image_with_text(snippet, img, ocr_text)
+            except Exception as e:
+                print(f"处理图片 {img} 时发生错误: {str(e)}\n", file=sys.stderr)
+            if idx % 10 == 0:  # 每处理10张图片就写入一次文件，避免内存占用过大
+                f.seek(0)
+                f.write(snippet)
+        f.seek(0)
         f.write(snippet)
