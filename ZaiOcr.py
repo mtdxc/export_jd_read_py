@@ -3,6 +3,9 @@ from zai import ZhipuAiClient
 import sys
 import base64
 from pathlib import Path
+import os
+from markdownify import markdownify as md
+import re
 
 def _sniff_mime_from_bytes(data: bytes) -> str:
     # PDF
@@ -21,7 +24,9 @@ def _as_data_uri(mime: str, b64: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 class ZaiOcr:
-    def __init__(self, api_key):
+    def __init__(self, api_key = ''):
+        if len(api_key) == 0:
+            api_key = os.environ.get('ZAI_API_KEY', '')
         self.client = ZhipuAiClient(api_key=api_key)
         
     def ocr(self, image_url):
@@ -43,12 +48,36 @@ class ZaiOcr:
 
         # 输出结果
         return response.md_results.replace("\n\n", "\n")
-    
+
+    def normalize_code(self, code):
+        # 这里可以添加更多的正则表达式来处理不同的代码格式问题
+        return code.replace("（", "(").replace("）", ")").replace("；", ";").replace(" ( ", "(").replace(" )", ")").replace(" ;", ";")
+
+    def ocr_code(self, image_url):
+        md_result = self.ocr(image_url)
+        # table替换
+        if md_result.startswith('<table'):
+            return md(md_result, table_infer_header=True)
+
+        # 判断markdown中是否包含代码块，如果有则直接返回代码块内容        
+        start = md_result.find('```')
+        if start != -1:
+            end = md_result.find('```', start + 3)
+            if end != -1:
+                return self.normalize_code(md_result[start:end+3])
+
+        # 采用关键字判断代码
+        if re.search(r'(if|else|for|while|uint|void|function|def|class|import|return|switch|case|break|continue|try|catch|finally|var|let|const|public|private|static)', md_result):
+            md_result = self.normalize_code(md_result)
+            return '```\n' + md_result + '\n```'
+        else:
+            print(f"unknown code: {image_url}\n{md_result}\n", file=sys.stderr)
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("请提供图片文件路径或URL作为参数。")
         sys.exit(1)
         
-    ocr = ZaiOcr('access_token')
-    result = ocr.ocr(sys.argv[1])
+    ocr = ZaiOcr()
+    result = ocr.ocr_code(sys.argv[1])
     print(result)
