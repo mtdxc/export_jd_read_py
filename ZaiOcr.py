@@ -5,6 +5,7 @@ import base64
 from pathlib import Path
 import os
 from markdownify import markdownify as md
+import sqlite3
 import re
 
 def _sniff_mime_from_bytes(data: bytes) -> str:
@@ -28,8 +29,36 @@ class ZaiOcr:
         if len(api_key) == 0:
             api_key = os.environ.get('ZAI_API_KEY', '')
         self.client = ZhipuAiClient(api_key=api_key)
-        
-    def ocr(self, image_url):
+
+    def initDb(self, db_name):
+        try:
+            self.db = sqlite3.connect(db_name)
+            self.cur = self.db.cursor()
+            self.cur.execute("CREATE TABLE IF NOT EXISTS ocr(url varchar(200) primary key, raw text, code text)")
+            return True
+        except Exception as e:
+            print(str(e))
+            return False
+
+    def __del__(self):
+        if self.cur:
+            self.cur.close()
+        if self.db:
+            self.db.commit()
+            self.db.close()
+
+    def insert(self, url, text, md = ''):
+        if self.cur:
+            self.cur.execute("INSERT OR REPLACE INTO ocr(url, raw, code) VALUES (?, ?, ?)", (url, text, md))
+
+    def fetch_all(self):
+        if self.cur:
+            self.cur.execute(f'select * from ocr')
+            return self.cur.fetchall()
+        return []
+
+    def ocr(self, image_url, insert_db=True):
+        path = image_url
         if not image_url.startswith("http://") and not image_url.startswith("https://"):
             # If it's a file path, read and encode
             path = Path(image_url)
@@ -56,31 +85,37 @@ class ZaiOcr:
         )
 
         # 输出结果
-        return response.md_results.replace("\n\n", "\n")
-
+        ret = response.md_results.replace("\n\n", "\n")
+        if insert_db and len(ret):
+            self.insert(str(path), ret)
+        return ret
+    
     def normalize_code(self, code):
         # 这里可以添加更多的正则表达式来处理不同的代码格式问题
         return code.replace("（", "(").replace("）", ")").replace("；", ";").replace(" ( ", "(").replace(" )", ")").replace(" ;", ";")
 
     def ocr_code(self, image_url):
-        md_result = self.ocr(image_url)
+        ret = ''
+        raw = self.ocr(image_url, False)
         # table替换
-        if md_result.startswith('<table'):
-            return md(md_result, table_infer_header=True)
-
-        # 判断markdown中是否包含代码块，如果有则直接返回代码块内容        
-        start = md_result.find('```')
-        if start != -1:
-            end = md_result.find('```', start + 3)
+        if raw.startswith('<table'):
+            ret = md(raw, table_infer_header=True)
+        elif -1 != raw.find('```'):
+            # 判断markdown中是否包含代码块，如果有则直接返回代码块内容        
+            start = raw.find('```')
+            end = raw.find('```', start + 3)
             if end != -1:
-                return self.normalize_code(md_result[start:end+3])
-
-        # 采用关键字判断代码
-        if re.search(r'(if|else|for|while|uint|void|function|def|class|import|return|switch|case|break|continue|try|catch|finally|var|let|const|public|private|static)', md_result):
-            md_result = self.normalize_code(md_result)
-            return '```\n' + md_result + '\n```'
+                ret = self.normalize_code(raw[start:end+3])
         else:
-            print(f"unknown code: {image_url}\n{md_result}\n", file=sys.stderr)
+            # 采用关键字判断代码
+            if re.search(r'(if|else|for|while|uint|void|function|def|class|import|return|switch|case|break|continue|try|catch|finally|var|let|const|public|private|static)', raw):
+                raw = self.normalize_code(raw)
+                return '```\n' + raw + '\n```'
+            else:
+                print(f"unknown code: {image_url}\n{raw}\n", file=sys.stderr)
+        if len(raw):
+            self.insert(image_url, raw, ret)
+        return ret
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -88,5 +123,8 @@ if __name__ == "__main__":
         sys.exit(1)
         
     ocr = ZaiOcr()
+    ocr.initDb("ocr.db")
     result = ocr.ocr_code(sys.argv[1])
     print(result)
+
+    # print(ocr.fetch_all())
