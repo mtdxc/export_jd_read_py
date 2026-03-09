@@ -56,21 +56,26 @@ class FolderImageBrowser:
         self.status_label = tk.Label(top, textvariable=self.status_var, anchor="w")
         self.status_label.pack(side=tk.LEFT, padx=12, fill=tk.X, expand=True)
 
-        # 图片与文本并排显示区
-        content_frame = tk.Frame(root)
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        # 图片与文本并排显示区（支持拖拽分割）
+        self.content_pane = tk.PanedWindow(
+            root,
+            orient=tk.HORIZONTAL,
+            sashwidth=6,
+            sashrelief=tk.RAISED,
+        )
+        self.content_pane.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
         # 左侧：图片显示区
-        image_frame = tk.Frame(content_frame)
-        image_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+        image_frame = tk.Frame(self.content_pane)
 
         self.image_label = tk.Label(image_frame, bg="#1e1e1e")
         self.image_label.pack(fill=tk.BOTH, expand=True)
 
         # 右侧：文本编辑区
-        text_frame = tk.Frame(content_frame, width=320)
-        text_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False)
-        text_frame.pack_propagate(False)
+        text_frame = tk.Frame(self.content_pane, width=360)
+
+        self.content_pane.add(image_frame, minsize=320, stretch="always")
+        self.content_pane.add(text_frame, minsize=260)
 
         # 上方文本编辑框
         text_top_frame = tk.Frame(text_frame)
