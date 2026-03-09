@@ -66,9 +66,9 @@ if __name__ == "__main__":
             img = imgs[idx]
             print(f"正在处理图片 {idx+1}/{total}: {img}")
             try:
-                ocr_text = ocr.ocr_code(img)
-                if ocr_text and len(ocr_text) > 0:
-                    snippet = replace_image_with_text(snippet, img, ocr_text)
+                item = ocr.ocr_code(img)
+                if item and len(item[2]) > 0:
+                    snippet = replace_image_with_text(snippet, img, item[2])
             except Exception as e:
                 print(f"处理图片 {img} 时发生错误: {str(e)}\n", file=sys.stderr)
             if idx % 10 == 0:  # 每处理10张图片就写入一次文件，避免内存占用过大
