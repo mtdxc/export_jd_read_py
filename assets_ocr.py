@@ -48,6 +48,10 @@ class FolderImageBrowser:
         self.btn_delete = tk.Button(top, text="删除", command=self.delete_image)
         self.btn_delete.pack(side=tk.LEFT, padx=(8, 0))
 
+        self.text_index = tk.Text(top, height=1, width=3)
+        self.text_index.pack(side=tk.LEFT, padx=(8, 0))
+        self.text_index.bind("<Return>", self.jump_to_index)
+
         self.status_var = tk.StringVar(value="请选择图片文件夹")
         self.status_label = tk.Label(top, textvariable=self.status_var, anchor="w")
         self.status_label.pack(side=tk.LEFT, padx=12, fill=tk.X, expand=True)
@@ -181,7 +185,9 @@ class FolderImageBrowser:
         self.image_label.config(image=self.current_tk_image)
 
         total = len(self.image_paths)
-        self.status_var.set(f"{self.index + 1}/{total}  -  {img_path.name}")
+        self.text_index.delete(1.0, tk.END)
+        self.text_index.insert(tk.END, str(self.index + 1))
+        self.status_var.set(f"/ {total}  -  {img_path.name}")
 
         self.btn_prev.config(state=tk.NORMAL if self.index > 0 else tk.DISABLED)
         self.btn_next.config(state=tk.NORMAL if self.index < total - 1 else tk.DISABLED)
@@ -201,6 +207,18 @@ class FolderImageBrowser:
             self.check_text_changed()
             self.index += 1
             self.show_current_image()
+
+    def jump_to_index(self, _event):
+        try:
+            idx = int(self.text_index.get(1.0, "end-1c").strip()) - 1
+            if 0 <= idx < len(self.image_paths):
+                self.check_text_changed()
+                self.index = idx
+                self.show_current_image()
+            else:
+                messagebox.showwarning("提示", f"请输入有效的图片序号（1-{len(self.image_paths)}）")
+        except ValueError:
+            messagebox.showwarning("提示", "请输入有效的数字序号")
 
     def _on_resize(self, _event):
         # 窗口尺寸变化时刷新当前图片显示
