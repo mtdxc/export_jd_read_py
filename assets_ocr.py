@@ -47,11 +47,11 @@ class FolderImageBrowser:
         self.btn_next = tk.Button(top, text="下一张", command=self.next_image, state=tk.DISABLED)
         self.btn_next.pack(side=tk.LEFT)
 
-        self.btn_recognize = tk.Button(top, text="识别", command=self.recognize_image)
-        self.btn_recognize.pack(side=tk.LEFT, padx=(8, 0))
+        btn_recognize = tk.Button(top, text="识别", command=self.recognize_image)
+        btn_recognize.pack(side=tk.LEFT, padx=(5, 0))
 
-        self.btn_delete = tk.Button(top, text="删除", command=self.delete_image)
-        self.btn_delete.pack(side=tk.LEFT, padx=(8, 0))
+        btn_delete = tk.Button(top, text="删除", command=self.delete_image)
+        btn_delete.pack(side=tk.LEFT)
 
         self.text_index = tk.Text(top, height=1, width=3)
         self.text_index.pack(side=tk.LEFT, padx=(8, 0))
@@ -96,6 +96,29 @@ class FolderImageBrowser:
         scrollbar_top = tk.Scrollbar(text_top_frame, command=self.text_ocr.yview)
         scrollbar_top.pack(side=tk.RIGHT, fill=tk.Y)
         self.text_ocr.config(yscrollcommand=scrollbar_top.set)
+
+        # 中间按钮行
+        text_button_frame = tk.Frame(text_frame, height=36)
+        text_button_frame.pack(side=tk.TOP, fill=tk.X, expand=False, pady=(0, 4))
+        text_button_frame.pack_propagate(False)
+
+        btn_html_md = tk.Button(text_button_frame, text="html2md", command=self.html2md)
+        btn_html_md.pack(side=tk.LEFT, padx=(8, 0))
+
+        btn_add_quate = tk.Button(text_button_frame, text="```", command=self.addQuate)
+        btn_add_quate.pack(side=tk.LEFT)
+
+        btn_add_padding = tk.Button(text_button_frame, text="Pad", command=self.addPadding)
+        btn_add_padding.pack(side=tk.LEFT, padx=(8, 0))
+
+        btn_delete2 = tk.Button(text_button_frame, text="del |", command=self.delete_table)
+        btn_delete2.pack(side=tk.LEFT)
+
+        btn_delete3 = tk.Button(text_button_frame, text="del \\", command=self.delete_quate)
+        btn_delete3.pack(side=tk.LEFT)
+
+        btn_strip = tk.Button(text_button_frame, text="strip", command=self.delete_strip)
+        btn_strip.pack(side=tk.LEFT)
 
         # 下方文本编辑框
         text_bottom_frame = tk.Frame(text_frame)
@@ -233,7 +256,51 @@ class FolderImageBrowser:
         self.item = item
         self.text_ocr.insert(tk.END, item[1])
         self.text_code.insert(tk.END, item[2])
-      
+
+    def html2md(self):
+        ocr = self.text_ocr.get(1.0, "end-1c")
+        if self.ocr:
+            code = self.ocr.html2md(ocr)
+            self.text_code.delete(1.0, tk.END)
+            self.text_code.insert(tk.END, code)
+
+    def _get_selected_or_all(self, text_widget: tk.Text):
+        try:
+            start = text_widget.index(tk.SEL_FIRST)
+            end = text_widget.index(tk.SEL_LAST)
+        except tk.TclError:
+            start = "1.0"
+            end = "end-1c"
+        return text_widget.get(start, end), start, end
+
+    def processTextWithSelect(self, text_widget: tk.Text, func):
+        content, start, end = self._get_selected_or_all(text_widget)
+        new_content = func(content)
+        text_widget.delete(start, end)
+        text_widget.insert(start, new_content)
+
+    def addQuate(self):
+        ocr = self.text_ocr.get(1.0, "end-1c")
+        if not ocr.startswith('```'):
+            ocr = '```\n' + ocr  # 添加代码块开始标记
+        if not ocr.endswith('```'):
+            ocr += '\n```'  # 添加代码块结束标记
+        self.text_code.delete(1.0, tk.END)
+        self.text_code.insert(tk.END, ocr)
+
+    def addPadding(self):
+        self.processTextWithSelect(self.text_code, lambda text: text.replace('\n', '\n    '))
+
+    def delete_table(self):
+        self.processTextWithSelect(self.text_code, lambda text: text.replace('|', ''))
+
+    def delete_quate(self):
+        self.processTextWithSelect(self.text_code, lambda text: text.replace('\\', ''))
+        
+    def delete_strip(self):
+        self.processTextWithSelect(self.text_code, lambda text: 
+                                   '\n'.join([line.strip() for line in text.split('\n')]))
+
     def check_text_changed(self):
         if self.index < 0 or self.index >= len(self.image_paths):
             return False

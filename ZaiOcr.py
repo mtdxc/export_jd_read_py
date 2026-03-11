@@ -110,6 +110,9 @@ class ZaiOcr:
         # 这里可以添加更多的正则表达式来处理不同的代码格式问题
         return code.replace("（", "(").replace("）", ")").replace("；", ";").replace(" ( ", "(").replace(" )", ")").replace(" ;", ";")
 
+    def html2md(self, html):
+        return md(html, table_infer_header=True)
+
     def ocr_code(self, image_url):
         ret = None
         code = ''
@@ -117,7 +120,7 @@ class ZaiOcr:
         raw = self.ocr(image_url, False)
         # table替换
         if raw.startswith('<table'):
-            code = md(raw, table_infer_header=True)
+            code = self.html2md(raw)
         elif -1 != raw.find('```'):
             # 判断markdown中是否包含代码块，如果有则直接返回代码块内容        
             start = raw.find('```')
