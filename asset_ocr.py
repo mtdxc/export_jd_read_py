@@ -6,7 +6,7 @@ asset浏览器（支持上一张/下一张）
 import importlib.util
 from ZaiOcr import ZaiOcr
 if importlib.util.find_spec("PIL") is None:
-    raise SystemExit("缺少依赖 Pillow，请先安装：pip install pillow")
+    raise SystemExit("缺少依赖 Pillow，请先安装：pip install pillow, 如果是macOS请先使用：brew install python-tk")
 import re
 import os
 import sys
@@ -119,6 +119,9 @@ class FolderImageBrowser:
 
         btn_strip = tk.Button(text_button_frame, text="strip", command=self.delete_strip)
         btn_strip.pack(side=tk.LEFT)
+
+        btn_add_quate2 = tk.Button(text_button_frame, text="```", command=self.addQuate2)
+        btn_add_quate2.pack(side=tk.LEFT)
 
         # 下方文本编辑框
         text_bottom_frame = tk.Frame(text_frame)
@@ -281,6 +284,15 @@ class FolderImageBrowser:
 
     def addQuate(self):
         ocr = self.text_ocr.get(1.0, "end-1c")
+        if not ocr.startswith('```'):
+            ocr = '```\n' + ocr  # 添加代码块开始标记
+        if not ocr.endswith('```'):
+            ocr += '\n```'  # 添加代码块结束标记
+        self.text_code.delete(1.0, tk.END)
+        self.text_code.insert(tk.END, ocr)
+    
+    def addQuate2(self):
+        ocr = self.text_code.get(1.0, "end-1c")
         if not ocr.startswith('```'):
             ocr = '```\n' + ocr  # 添加代码块开始标记
         if not ocr.endswith('```'):
