@@ -3,17 +3,19 @@
 asset浏览器（支持上一张/下一张）
 """
 
-import importlib.util
-from ZaiOcr import ZaiOcr
-if importlib.util.find_spec("PIL") is None:
-    raise SystemExit("缺少依赖 Pillow，请先安装：pip install pillow, 如果是macOS请先使用：brew install python-tk")
 import re
 import os
 import sys
 import zipfile
+from pathlib import Path
+from ZaiOcr import ZaiOcr
+import importlib.util
+
+if importlib.util.find_spec("PIL") is None:
+    raise SystemExit("缺少依赖 Pillow，请先安装：pip install pillow, 如果是macOS请先使用：brew install python-tk")
+
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from pathlib import Path
 from PIL import Image, ImageTk
 
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
@@ -28,22 +30,28 @@ class FolderImageBrowser:
         self.image_paths = []
         self.index = -1
         self.current_tk_image = None
+        self.current_pil_image = None
         self.ocr = None
         self.item = None
+        self.selection_rect_id = None
+        self.drag_start = None
+        self.drag_mode = None
+        self.resize_handle = None
+        self.drag_origin_rect = None
+        self.selection_bbox_image = None
+        self.display_offset = (0, 0)
+        self.display_size = (0, 0)
 
         # 顶部操作区
         top = tk.Frame(root)
         top.pack(fill=tk.X, padx=8, pady=8)
 
-        self.btn_open = tk.Button(top, text="打开assets", command=self.open_folder)
-        self.btn_open.pack(side=tk.LEFT)
+        tk.Button(top, text="打开assets", command=self.open_folder).pack(side=tk.LEFT)
         
         self.chk_zip_var = tk.IntVar(value=0)
-        chk_zip = tk.Checkbutton(top, text="生成ZIP", variable=self.chk_zip_var)
-        chk_zip.pack(side=tk.LEFT)
+        tk.Checkbutton(top, text="生成ZIP", variable=self.chk_zip_var).pack(side=tk.LEFT)
 
-        self.btn_open_md = tk.Button(top, text="处理MD", command=self.open_md)
-        self.btn_open_md.pack(side=tk.LEFT)
+        tk.Button(top, text="处理MD", command=self.open_md).pack(side=tk.LEFT)
 
         self.btn_prev = tk.Button(top, text="上一张", command=self.prev_image, state=tk.DISABLED)
         self.btn_prev.pack(side=tk.LEFT, padx=(8, 0))
@@ -51,11 +59,9 @@ class FolderImageBrowser:
         self.btn_next = tk.Button(top, text="下一张", command=self.next_image, state=tk.DISABLED)
         self.btn_next.pack(side=tk.LEFT)
 
-        btn_recognize = tk.Button(top, text="识别", command=self.recognize_image)
-        btn_recognize.pack(side=tk.LEFT, padx=(5, 0))
+        tk.Button(top, text="识别", command=self.recognize_image).pack(side=tk.LEFT, padx=(5, 0))
 
-        btn_delete = tk.Button(top, text="删除", command=self.delete_image)
-        btn_delete.pack(side=tk.LEFT)
+        tk.Button(top, text="删除", command=self.delete_image).pack(side=tk.LEFT)
 
         self.text_index = tk.Text(top, height=1, width=3)
         self.text_index.pack(side=tk.LEFT, padx=(8, 0))
@@ -81,8 +87,11 @@ class FolderImageBrowser:
         # 左侧：图片显示区
         image_frame = tk.Frame(self.content_pane)
 
-        self.image_label = tk.Label(image_frame, bg="#1e1e1e")
-        self.image_label.pack(fill=tk.BOTH, expand=True)
+        self.image_canvas = tk.Canvas(image_frame, bg="#1e1e1e", highlightthickness=0)
+        self.image_canvas.pack(fill=tk.BOTH, expand=True)
+        self.image_canvas.bind("<ButtonPress-1>", self._on_canvas_press)
+        self.image_canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.image_canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
 
         # 右侧：文本编辑区
         text_frame = tk.Frame(self.content_pane, width=360)
@@ -106,26 +115,19 @@ class FolderImageBrowser:
         text_button_frame.pack(side=tk.TOP, fill=tk.X, expand=False, pady=(0, 4))
         text_button_frame.pack_propagate(False)
 
-        btn_html_md = tk.Button(text_button_frame, text="html2md", command=self.html2md)
-        btn_html_md.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(text_button_frame, text="html2md", command=self.html2md).pack(side=tk.LEFT, padx=(8, 0))
 
-        btn_add_quate = tk.Button(text_button_frame, text="```", command=self.addQuate)
-        btn_add_quate.pack(side=tk.LEFT)
+        tk.Button(text_button_frame, text="```", command=self.addQuate).pack(side=tk.LEFT)
 
-        btn_add_padding = tk.Button(text_button_frame, text="Pad", command=self.addPadding)
-        btn_add_padding.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(text_button_frame, text="Pad", command=self.addPadding).pack(side=tk.LEFT, padx=(8, 0))
 
-        btn_delete2 = tk.Button(text_button_frame, text="del |", command=self.delete_table)
-        btn_delete2.pack(side=tk.LEFT)
+        tk.Button(text_button_frame, text="del |", command=self.delete_table).pack(side=tk.LEFT)
 
-        btn_delete3 = tk.Button(text_button_frame, text="del \\", command=self.delete_quate)
-        btn_delete3.pack(side=tk.LEFT)
+        tk.Button(text_button_frame, text="del \\", command=self.delete_quate).pack(side=tk.LEFT)
 
-        btn_strip = tk.Button(text_button_frame, text="strip", command=self.delete_strip)
-        btn_strip.pack(side=tk.LEFT)
+        tk.Button(text_button_frame, text="strip", command=self.delete_strip).pack(side=tk.LEFT)
 
-        btn_add_quate2 = tk.Button(text_button_frame, text="```", command=self.addQuate2)
-        btn_add_quate2.pack(side=tk.LEFT)
+        tk.Button(text_button_frame, text="```", command=self.addQuate2).pack(side=tk.LEFT)
 
         # 下方文本编辑框
         text_bottom_frame = tk.Frame(text_frame)
@@ -158,7 +160,209 @@ class FolderImageBrowser:
             return
         self.next_image()
 
-    def process_md(self, md_file_path, zip):
+    def _clear_selection(self):
+        if self.selection_rect_id is not None:
+            self.image_canvas.delete(self.selection_rect_id)
+            self.selection_rect_id = None
+        self.drag_start = None
+        self.drag_mode = None
+        self.resize_handle = None
+        self.drag_origin_rect = None
+        self.selection_bbox_image = None
+
+    def _get_current_rect(self):
+        if self.selection_rect_id is None:
+            return None
+        coords = self.image_canvas.coords(self.selection_rect_id)
+        if len(coords) != 4:
+            return None
+        x0, y0, x1, y1 = coords
+        return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+
+    def _point_in_rect(self, x, y, rect):
+        x0, y0, x1, y1 = rect
+        return x0 <= x <= x1 and y0 <= y <= y1
+
+    def _detect_resize_handle(self, x, y, rect, margin=8):
+        x0, y0, x1, y1 = rect
+        near_left = abs(x - x0) <= margin
+        near_right = abs(x - x1) <= margin
+        near_top = abs(y - y0) <= margin
+        near_bottom = abs(y - y1) <= margin
+
+        if near_left and near_top:
+            return "nw"
+        if near_right and near_top:
+            return "ne"
+        if near_left and near_bottom:
+            return "sw"
+        if near_right and near_bottom:
+            return "se"
+        if near_left:
+            return "w"
+        if near_right:
+            return "e"
+        if near_top:
+            return "n"
+        if near_bottom:
+            return "s"
+        return None
+
+    def _move_rect_within_display(self, rect, dx, dy):
+        x0, y0, x1, y1 = rect
+        ox, oy = self.display_offset
+        dw, dh = self.display_size
+        min_x = ox
+        min_y = oy
+        max_x = ox + dw
+        max_y = oy + dh
+
+        nx0, ny0, nx1, ny1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
+
+        if nx0 < min_x:
+            shift = min_x - nx0
+            nx0 += shift
+            nx1 += shift
+        if nx1 > max_x:
+            shift = nx1 - max_x
+            nx0 -= shift
+            nx1 -= shift
+        if ny0 < min_y:
+            shift = min_y - ny0
+            ny0 += shift
+            ny1 += shift
+        if ny1 > max_y:
+            shift = ny1 - max_y
+            ny0 -= shift
+            ny1 -= shift
+        return nx0, ny0, nx1, ny1
+
+    def _resize_rect(self, rect, handle, x, y):
+        x0, y0, x1, y1 = rect
+        ox, oy = self.display_offset
+        dw, dh = self.display_size
+        min_x = ox
+        min_y = oy
+        max_x = ox + dw
+        max_y = oy + dh
+        min_size = 3
+
+        if "w" in handle:
+            x0 = min(max(x, min_x), x1 - min_size)
+        if "e" in handle:
+            x1 = max(min(x, max_x), x0 + min_size)
+        if "n" in handle:
+            y0 = min(max(y, min_y), y1 - min_size)
+        if "s" in handle:
+            y1 = max(min(y, max_y), y0 + min_size)
+        return x0, y0, x1, y1
+
+    def _clamp_to_display(self, x, y):
+        ox, oy = self.display_offset
+        dw, dh = self.display_size
+        if dw <= 0 or dh <= 0:
+            return x, y
+        x = min(max(x, ox), ox + dw)
+        y = min(max(y, oy), oy + dh)
+        return x, y
+
+    def _canvas_to_image_bbox(self, x0, y0, x1, y1):
+        if self.current_pil_image is None:
+            return None
+        ow, oh = self.current_pil_image.size
+        dw, dh = self.display_size
+        if dw <= 0 or dh <= 0:
+            return None
+
+        sx = ow / dw
+        sy = oh / dh
+        ox, oy = self.display_offset
+
+        ix0 = int(round((x0 - ox) * sx))
+        iy0 = int(round((y0 - oy) * sy))
+        ix1 = int(round((x1 - ox) * sx))
+        iy1 = int(round((y1 - oy) * sy))
+
+        ix0 = min(max(ix0, 0), ow)
+        iy0 = min(max(iy0, 0), oh)
+        ix1 = min(max(ix1, 0), ow)
+        iy1 = min(max(iy1, 0), oh)
+        return ix0, iy0, ix1, iy1
+
+    def _on_canvas_press(self, event):
+        if self.current_tk_image is None:
+            return
+        x, y = self._clamp_to_display(event.x, event.y)
+        current_rect = self._get_current_rect()
+        if current_rect and self._point_in_rect(x, y, current_rect):
+            self.drag_start = (x, y)
+            self.drag_origin_rect = current_rect
+            handle = self._detect_resize_handle(x, y, current_rect)
+            self.resize_handle = handle
+            self.drag_mode = "resize" if handle else "move"
+            return
+
+        self.drag_start = (x, y)
+        self.drag_mode = "create"
+        self.resize_handle = None
+        self.drag_origin_rect = None
+        if self.selection_rect_id is not None:
+            self.image_canvas.delete(self.selection_rect_id)
+        self.selection_rect_id = self.image_canvas.create_rectangle(
+            x, y, x, y, outline="#00d2ff", width=2
+        )
+
+    def _on_canvas_drag(self, event):
+        if self.drag_start is None:
+            return
+        x, y = self._clamp_to_display(event.x, event.y)
+
+        if self.drag_mode == "create":
+            if self.selection_rect_id is None:
+                return
+            x0, y0 = self.drag_start
+            self.image_canvas.coords(self.selection_rect_id, x0, y0, x, y)
+            return
+
+        if self.selection_rect_id is None or self.drag_origin_rect is None:
+            return
+
+        if self.drag_mode == "move":
+            sx, sy = self.drag_start
+            dx, dy = x - sx, y - sy
+            nx0, ny0, nx1, ny1 = self._move_rect_within_display(self.drag_origin_rect, dx, dy)
+            self.image_canvas.coords(self.selection_rect_id, nx0, ny0, nx1, ny1)
+            return
+
+        if self.drag_mode == "resize" and self.resize_handle:
+            nx0, ny0, nx1, ny1 = self._resize_rect(self.drag_origin_rect, self.resize_handle, x, y)
+            self.image_canvas.coords(self.selection_rect_id, nx0, ny0, nx1, ny1)
+
+    def _on_canvas_release(self, event):
+        if self.drag_start is None or self.selection_rect_id is None:
+            return
+        rect = self._get_current_rect()
+        if rect is None:
+            self._clear_selection()
+            return
+
+        x0, y0, x1, y1 = rect
+        if abs(x1 - x0) < 5 or abs(y1 - y0) < 5:
+            self._clear_selection()
+            return
+
+        image_bbox = self._canvas_to_image_bbox(x0, y0, x1, y1)
+        if image_bbox:
+            self.selection_bbox_image = image_bbox
+            self.status_var.set(
+                f"选区(原图): x={image_bbox[0]}-{image_bbox[2]}, y={image_bbox[1]}-{image_bbox[3]}"
+            )
+        self.drag_start = None
+        self.drag_mode = None
+        self.resize_handle = None
+        self.drag_origin_rect = None
+
+    def process_md(self, md_file_path, to_zip):
         imgs = []
         snippet = ""
         with open(md_file_path, 'r', encoding='utf-8') as f:
@@ -172,9 +376,9 @@ class FolderImageBrowser:
             return
         
         # 切换到 Markdown 文件所在目录，确保图片路径正确
-        dir = os.path.dirname(md_file_path)
+        base_dir = os.path.dirname(md_file_path)
         zf = None
-        if zip:
+        if to_zip:
             dst_file = md_file_path.replace(".md", ".zip")
             zf = zipfile.ZipFile(dst_file, "w")
         else:
@@ -184,7 +388,7 @@ class FolderImageBrowser:
         print(f"正在处理 Markdown 文件: {md_file_path} 共 {len(imgs)} 张图片")
         for img in imgs:
             pos += 1
-            img_path = Path(os.path.join(dir, img))
+            img_path = Path(os.path.join(base_dir, img))
             if not img_path.is_file():
                 # 略过非本地文件
                 continue
@@ -211,12 +415,14 @@ class FolderImageBrowser:
         print(f"已生成文件: {dst_file}")
 
     def open_md(self):
-        md_file = filedialog.askopenfile(title="选择md文件", 
-                                         filetypes=[("Markdown files", "*.md")], 
-                                         initialdir=self.dir if hasattr(self, 'dir') else None)
+        md_file = filedialog.askopenfilename(
+            title="选择md文件",
+            filetypes=[("Markdown files", "*.md")],
+            initialdir=self.dir if hasattr(self, 'dir') else None,
+        )
         if not md_file:
             return
-        self.process_md(md_file.name, bool(self.chk_zip_var.get()))
+        self.process_md(md_file, bool(self.chk_zip_var.get()))
 
     def open_folder(self):
         folder = filedialog.askdirectory(title="选择图片文件夹")
@@ -262,7 +468,13 @@ class FolderImageBrowser:
         img_path = str(self.image_paths[self.index])
         # 调用 OCR 接口识别图片中的文字
         if self.ocr:
-            self.updateText(self.ocr.ocr_code(img_path))
+            if not self.selection_bbox_image:
+                self.updateText(self.ocr.ocr_code(img_path))
+            elif self.current_pil_image:
+                crop_file = "crop_temp.png"
+                cropped = self.current_pil_image.crop(self.selection_bbox_image)
+                cropped.save(crop_file, format="PNG")  # 临时保存选区图片，便于调试
+                self.updateText(self.ocr.ocr_code(crop_file))
 
     def updateText(self, item):
         self.text_ocr.delete(1.0, tk.END)
@@ -347,18 +559,28 @@ class FolderImageBrowser:
 
         img_path = self.image_paths[self.index]
         try:
-            img = Image.open(img_path)
+            with Image.open(img_path) as img:
+                self.current_pil_image = img.copy()
         except Exception as e:
             messagebox.showerror("错误", f"无法打开图片：\n{img_path}\n\n{e}")
             return
 
         # 按窗口大小等比缩放
-        w = max(self.image_label.winfo_width(), 300)
-        h = max(self.image_label.winfo_height(), 200)
-        img.thumbnail((w - 20, h - 20), Image.Resampling.LANCZOS)
+        w = max(self.image_canvas.winfo_width(), 300)
+        h = max(self.image_canvas.winfo_height(), 200)
+        display_img = self.current_pil_image.copy()
+        display_img.thumbnail((w - 20, h - 20), Image.Resampling.LANCZOS)
 
-        self.current_tk_image = ImageTk.PhotoImage(img)
-        self.image_label.config(image=self.current_tk_image)
+        self.current_tk_image = ImageTk.PhotoImage(display_img)
+        self.image_canvas.delete("all")
+
+        dw, dh = display_img.size
+        ox = (w - dw) // 2
+        oy = (h - dh) // 2
+        self.display_offset = (ox, oy)
+        self.display_size = (dw, dh)
+        self.image_canvas.create_image(ox, oy, anchor=tk.NW, image=self.current_tk_image)
+        self._clear_selection()
 
         total = len(self.image_paths)
         self.text_index.delete(1.0, tk.END)
