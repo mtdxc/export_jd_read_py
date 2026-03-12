@@ -37,6 +37,10 @@ class FolderImageBrowser:
 
         self.btn_open = tk.Button(top, text="打开assets", command=self.open_folder)
         self.btn_open.pack(side=tk.LEFT)
+        
+        self.chk_zip_var = tk.IntVar(value=0)
+        chk_zip = tk.Checkbutton(top, text="生成ZIP", variable=self.chk_zip_var)
+        chk_zip.pack(side=tk.LEFT)
 
         self.btn_open_md = tk.Button(top, text="处理MD", command=self.open_md)
         self.btn_open_md.pack(side=tk.LEFT)
@@ -154,7 +158,7 @@ class FolderImageBrowser:
             return
         self.next_image()
 
-    def process_md(self, md_file_path):
+    def process_md(self, md_file_path, zip):
         imgs = []
         snippet = ""
         with open(md_file_path, 'r', encoding='utf-8') as f:
@@ -169,33 +173,42 @@ class FolderImageBrowser:
         
         # 切换到 Markdown 文件所在目录，确保图片路径正确
         dir = os.path.dirname(md_file_path)
-        dst_file = md_file_path.replace(".md", ".zip")
-        with zipfile.ZipFile(dst_file, "w") as zf:
-            pos = 0
-            print(f"正在处理 Markdown 文件: {md_file_path} 共 {len(imgs)} 张图片")
-            for img in imgs:
-                pos += 1
-                img_path = Path(os.path.join(dir, img))
-                if not img_path.is_file():
-                    # 略过非本地文件
-                    continue
+        zf = None
+        if zip:
+            dst_file = md_file_path.replace(".md", ".zip")
+            zf = zipfile.ZipFile(dst_file, "w")
+        else:
+            dst_file = md_file_path.replace(".md", "_ocr.md")
 
-                try:
-                    item = self.ocr.find(img_path)
-                    if item and len(item[2]) > 0:
-                        print(f"替换图片{pos}: {img}")
-                        pattern = re.escape(f'![]({img})')
-                        snippet = re.sub(pattern, item[2], snippet)
-                        continue  # 已替换文本，不再添加图片到 ZIP 中
-                except Exception as e:
-                    print(f"处理图片{pos} {img} 时发生错误: {str(e)}\n", file=sys.stderr)
-                    
-                # 没有找到 OCR 记录或记录为空，才添加图片到 ZIP 中
+        pos = 0
+        print(f"正在处理 Markdown 文件: {md_file_path} 共 {len(imgs)} 张图片")
+        for img in imgs:
+            pos += 1
+            img_path = Path(os.path.join(dir, img))
+            if not img_path.is_file():
+                # 略过非本地文件
+                continue
+
+            try:
+                item = self.ocr.find(img_path) if self.ocr else None
+                if item and len(item[2]) > 0:
+                    print(f"替换图片{pos}: {img}")
+                    pattern = re.escape(f'![]({img})')
+                    snippet = re.sub(pattern, item[2], snippet)
+                    continue  # 已替换文本，不再添加图片到 ZIP 中
+            except Exception as e:
+                print(f"处理图片{pos} {img} 时发生错误: {str(e)}\n", file=sys.stderr)
+                
+            # 没有找到 OCR 记录或记录为空，才添加图片到 ZIP 中
+            if zf:
                 print(f"添加图片{pos}: {img}")
                 zf.write(img_path, arcname=img)  # 将图片添加到 ZIP 文件中，保持相对路径
-
+        if zf:
             zf.writestr(os.path.basename(md_file_path), snippet)
-            print(f"已生成 ZIP 文件: {dst_file}")
+        else:
+            with open(dst_file, 'w', encoding='utf-8') as f:
+                f.write(snippet)
+        print(f"已生成文件: {dst_file}")
 
     def open_md(self):
         md_file = filedialog.askopenfile(title="选择md文件", 
@@ -203,7 +216,7 @@ class FolderImageBrowser:
                                          initialdir=self.dir if hasattr(self, 'dir') else None)
         if not md_file:
             return
-        self.process_md(md_file.name)
+        self.process_md(md_file.name, bool(self.chk_zip_var.get()))
 
     def open_folder(self):
         folder = filedialog.askdirectory(title="选择图片文件夹")
