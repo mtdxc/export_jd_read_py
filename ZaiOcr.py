@@ -7,6 +7,7 @@ import os
 from markdownify import markdownify as md
 import sqlite3
 import re
+from io import BytesIO
 
 def _sniff_mime_from_bytes(data: bytes) -> str:
     # PDF
@@ -73,17 +74,30 @@ class ZaiOcr:
             self.cur.execute("DELETE FROM ocr WHERE url=?", (url,))
             self.db.commit()
 
-    def ocr(self, image_url, insert_db=True):
-        image_url = path = str(image_url)
-        if not image_url.startswith("http://") and not image_url.startswith("https://"):
-            # If it's a file path, read and encode
-            path = Path(image_url)
-            if not path.exists():
-                raise FileNotFoundError(f"File not found: {path}")
-            file_bytes = path.read_bytes()
-            b64 = base64.b64encode(file_bytes).decode("utf-8")
+    def ocr(self, image, insert_db=True):
+        image_url = ""
+        if isinstance(image, (str, Path)):
+            image_url = str(image)
+            print(f"ocr image: {image_url}")
+            if not image_url.startswith("http://") and not image_url.startswith("https://"):
+                # Local file path: read and convert to data URI.
+                path = Path(image_url)
+                if not path.exists():
+                    raise FileNotFoundError(f"File not found: {path}")
+                file_bytes = path.read_bytes()
+                b64 = base64.b64encode(file_bytes).decode("utf-8")
+                mime = _sniff_mime_from_bytes(file_bytes)
+                image_url = _as_data_uri(mime, b64)
+        elif hasattr(image, "save"):
+            # PIL Image-like object: save to bytes and convert to data URI.
+            buf = BytesIO()
+            image.save(buf, format="PNG")
+            file_bytes = buf.getvalue()
             mime = _sniff_mime_from_bytes(file_bytes)
-            image_url = _as_data_uri(mime, b64)
+            image_url = _as_data_uri(mime, base64.b64encode(file_bytes).decode("utf-8"))
+            insert_db = False  # 不直接存储data URI到数据库
+        else:
+            raise TypeError("image must be URL/path string, pathlib.Path, or PIL Image-like object")
                     
         # 调用布局解析 API
         response = self.client.layout_parsing.create(
@@ -110,7 +124,7 @@ class ZaiOcr:
         image_url = str(image_url)
         raw = self.ocr(image_url, False)
         # table替换
-        if raw.startswith('<table'):
+        if raw.find('<table') != -1 and raw.find('</table>') != -1:
             code = self.html2md(raw)
         elif -1 != raw.find('```'):
             # 判断markdown中是否包含代码块，如果有则直接返回代码块内容        
@@ -136,6 +150,6 @@ if __name__ == "__main__":
     ocr = ZaiOcr()
     ocr.initDb("ocr.db")
     result = ocr.ocr_code(sys.argv[1])
-    print(result)
+    print(result[2])
 
     # print(ocr.fetch_all())

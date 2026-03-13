@@ -143,6 +143,7 @@ class FolderImageBrowser:
         # 快捷键
         self.root.bind("<Left>", self._on_prev_key)
         self.root.bind("<Right>", self._on_next_key)
+        self.root.bind("<Alt-r>", lambda e: self.recognize_image())
         self.root.bind("<Delete>", lambda e: self.delete_image() if not self._focus_in_text_widget() else None)
         self.root.bind("<Configure>", self._on_resize)
 
