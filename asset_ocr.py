@@ -116,8 +116,8 @@ class FolderImageBrowser:
         text_button_frame.pack_propagate(False)
 
         tk.Button(text_button_frame, text="html2md", command=self.html2md).pack(side=tk.LEFT, padx=(8, 0))
-
         tk.Button(text_button_frame, text="```", command=self.addQuate).pack(side=tk.LEFT)
+        tk.Button(text_button_frame, text="del 1.", command=self.delete_lineNo).pack(side=tk.LEFT)
 
         tk.Button(text_button_frame, text="Pad", command=self.addPadding).pack(side=tk.LEFT, padx=(8, 0))
 
@@ -127,6 +127,9 @@ class FolderImageBrowser:
 
         tk.Button(text_button_frame, text="strip", command=self.delete_strip).pack(side=tk.LEFT)
 
+        self.text_remove = tk.Text(text_button_frame, height=1, width=5)
+        self.text_remove.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(text_button_frame, text="del", command=self.delete_text).pack(side=tk.LEFT)
         tk.Button(text_button_frame, text="```", command=self.addQuate2).pack(side=tk.LEFT)
 
         # 下方文本编辑框
@@ -141,25 +144,21 @@ class FolderImageBrowser:
         self.text_code.config(yscrollcommand=scrollbar_bottom.set)
 
         # 快捷键
-        self.root.bind("<Left>", self._on_prev_key)
-        self.root.bind("<Right>", self._on_next_key)
-        self.root.bind("<Alt-r>", lambda e: self.recognize_image())
+        self.root.bind("<Left>", lambda e: self.prev_image() if not self._focus_in_text_widget() else None)
+        self.root.bind("<Right>", lambda e: self.next_image() if not self._focus_in_text_widget() else None)
         self.root.bind("<Delete>", lambda e: self.delete_image() if not self._focus_in_text_widget() else None)
+        self.root.bind("<Alt-Left>", lambda e: self.prev_image())
+        self.root.bind("<Alt-Right>", lambda e: self.next_image())
+        self.root.bind("<Alt-Delete>", lambda e: self.delete_image())
+        self.root.bind("<Alt-Up>", lambda e: self.recognize_image())
+        self.root.bind("<Alt-Down>", lambda e: self.addQuate())
+        self.root.bind("<Alt-r>", lambda e: self.recognize_image())
+        self.root.bind("<Alt-v>", lambda e: self.addQuate())
         self.root.bind("<Configure>", self._on_resize)
 
     def _focus_in_text_widget(self):
         widget = self.root.focus_get()
         return isinstance(widget, tk.Text)
-
-    def _on_prev_key(self, _event):
-        if self._focus_in_text_widget():
-            return
-        self.prev_image()
-
-    def _on_next_key(self, _event):
-        if self._focus_in_text_widget():
-            return
-        self.next_image()
 
     def _clear_selection(self):
         if self.selection_rect_id is not None:
@@ -525,6 +524,10 @@ class FolderImageBrowser:
             ocr += '\n```'  # 添加代码块结束标记
         self.text_code.delete(1.0, tk.END)
         self.text_code.insert(tk.END, ocr)
+        # 选中第二行
+        self.text_code.mark_set(tk.INSERT, "2.0")
+        self.text_code.see(tk.INSERT)
+        self.text_code.focus_set()
 
     def addPadding(self):
         self.processTextWithSelect(self.text_code, lambda text: text.replace('\n', '\n    '))
@@ -534,7 +537,16 @@ class FolderImageBrowser:
 
     def delete_quate(self):
         self.processTextWithSelect(self.text_code, lambda text: text.replace('\\', ''))
-        
+
+    def delete_text(self): # 删除选中的文本
+        txt = self.text_remove.get(1.0, "end-1c")
+        if len(txt):
+            self.processTextWithSelect(self.text_code, lambda text: text.replace(txt, ''))
+
+    def delete_lineNo(self): # 删除行号
+        self.processTextWithSelect(self.text_ocr, lambda text: 
+                                   '\n'.join([re.sub(r'^\s*\d+\.', '', line) for line in text.split('\n')]))
+
     def delete_strip(self):
         self.processTextWithSelect(self.text_code, lambda text: 
                                    '\n'.join([line.strip() for line in text.split('\n')]))
