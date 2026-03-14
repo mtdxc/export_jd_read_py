@@ -397,8 +397,7 @@ class FolderImageBrowser:
                 item = self.ocr.find(img_path) if self.ocr else None
                 if item and len(item[2]) > 0:
                     print(f"替换图片{pos}: {img}")
-                    pattern = re.escape(f'![]({img})')
-                    snippet = re.sub(pattern, item[2], snippet)
+                    snippet = snippet.replace(f'![]({img})', item[2])
                     continue  # 已替换文本，不再添加图片到 ZIP 中
             except Exception as e:
                 print(f"处理图片{pos} {img} 时发生错误: {str(e)}\n", file=sys.stderr)
@@ -530,7 +529,25 @@ class FolderImageBrowser:
         self.text_code.focus_set()
 
     def addPadding(self):
-        self.processTextWithSelect(self.text_code, lambda text: text.replace('\n', '\n    '))
+        try:
+            start = f"{int(float(self.text_code.index(tk.SEL_FIRST)))}.0"
+            end = self.text_code.index(tk.SEL_LAST)
+        except tk.TclError:
+            start = "1.0"
+            end = "end-1c"
+
+        text = self.text_code.get(start, end)
+        if len(text) >= 0:
+            # text = '    ' + text.replace('\n', '\n    ')
+            text = '\n'.join(['    ' + line for line in text.split('\n')])
+            self.text_code.delete(start, end)
+            self.text_code.insert(start, text)
+            # 保留之前选择行
+            new_end = self.text_code.index(f"{start}+{len(text)}c")
+            self.text_code.tag_remove(tk.SEL, "1.0", tk.END)
+            self.text_code.tag_add(tk.SEL, start, new_end)
+            self.text_code.mark_set(tk.INSERT, new_end)
+            self.text_code.see(tk.INSERT)
 
     def delete_table(self):
         self.processTextWithSelect(self.text_code, lambda text: text.replace('|', ''))
