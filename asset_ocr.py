@@ -377,6 +377,7 @@ class FolderImageBrowser:
         
         # 切换到 Markdown 文件所在目录，确保图片路径正确
         base_dir = os.path.dirname(md_file_path)
+        os.chdir(base_dir)  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
         zf = None
         if to_zip:
             dst_file = md_file_path.replace(".md", ".zip")
@@ -388,13 +389,8 @@ class FolderImageBrowser:
         print(f"正在处理 Markdown 文件: {md_file_path} 共 {len(imgs)} 张图片")
         for img in imgs:
             pos += 1
-            img_path = Path(os.path.join(base_dir, img))
-            if not img_path.is_file():
-                # 略过非本地文件
-                continue
-
             try:
-                item = self.ocr.find(img_path) if self.ocr else None
+                item = self.ocr.find(img) if self.ocr else None
                 if item and len(item[2]) > 0:
                     print(f"替换图片{pos}: {img}")
                     snippet = snippet.replace(f'![]({img})', item[2])
@@ -403,11 +399,12 @@ class FolderImageBrowser:
                 print(f"处理图片{pos} {img} 时发生错误: {str(e)}\n", file=sys.stderr)
                 
             # 没有找到 OCR 记录或记录为空，才添加图片到 ZIP 中
-            if zf:
+            if zf and Path(img).is_file():
                 print(f"添加图片{pos}: {img}")
-                zf.write(img_path, arcname=img)  # 将图片添加到 ZIP 文件中，保持相对路径
+                zf.write(img)
         if zf:
             zf.writestr(os.path.basename(md_file_path), snippet)
+            zf.close()
         else:
             with open(dst_file, 'w', encoding='utf-8') as f:
                 f.write(snippet)
@@ -428,17 +425,19 @@ class FolderImageBrowser:
         if not folder:
             return
 
+        self.dir = os.path.dirname(folder)
+        dirname = os.path.basename(folder)
+        os.chdir(self.dir)  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
         paths = []
-        for p in sorted(Path(folder).iterdir(), key=lambda x: x.name.lower()):
+        for p in sorted(Path(dirname).iterdir(), key=lambda x: x.name.lower()):
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS:
                 paths.append(p)
 
         if not paths:
             messagebox.showwarning("提示", "该文件夹中没有可显示的图片。")
             return
+
         self.btn_pages.config(text=f" / {len(paths)} :")
-        self.dir = os.path.dirname(folder)
-        os.chdir(self.dir)  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
         self.root.title(f'asset浏览器 - {self.dir}')
         
         self.ocr = ZaiOcr()
@@ -470,17 +469,16 @@ class FolderImageBrowser:
             if not self.selection_bbox_image:
                 self.updateText(self.ocr.ocr_code(img_path))
             elif self.current_pil_image:
-                crop_file = "crop_temp.png"
                 cropped = self.current_pil_image.crop(self.selection_bbox_image)
-                cropped.save(crop_file, format="PNG")  # 临时保存选区图片，便于调试
-                self.updateText(self.ocr.ocr_code(crop_file))
+                self.updateText(self.ocr.ocr_code(cropped))
 
     def updateText(self, item):
         self.text_ocr.delete(1.0, tk.END)
         self.text_code.delete(1.0, tk.END)
         if item is None:
             return
-        self.item = item
+        if item[0]:
+            self.item = item
         self.text_ocr.insert(tk.END, item[1])
         self.text_code.insert(tk.END, item[2])
 
@@ -579,7 +577,7 @@ class FolderImageBrowser:
         code = self.text_code.get(1.0, "end-1c")
         if self.item and (ocr != self.item[1] or code != self.item[2]):
             print(f"更新记录: {self.item} {ocr} {code}")
-            self.ocr.update((str(img_path), ocr, code))
+            self.ocr.update((img_path, ocr, code))
             return True
         return False
         
