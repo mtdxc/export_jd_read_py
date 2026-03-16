@@ -172,6 +172,8 @@ class ZaiOcr:
             end = raw.find('```', start + 3)
             if end != -1:
                 code = self.normalize_code(raw[start:end+3])
+        elif raw.startswith('$') and raw.endswith('$'): # 数学公式
+            code = raw
         else:
             # 采用关键字判断代码
             if re.search(r'\b(if|else|for|while|uint|void|function|def|class|import|return|switch|case|break|continue|try|catch|finally|var|let|const|public|private|static)\b', raw):

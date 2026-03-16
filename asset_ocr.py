@@ -506,15 +506,20 @@ class FolderImageBrowser:
 
     def addQuate(self):
         ocr = self.text_ocr.get(1.0, "end-1c")
-        if not ocr.startswith('```'):
-            ocr = '```\n' + ocr  # 添加代码块开始标记
-        if not ocr.endswith('```'):
-            ocr += '\n```'  # 添加代码块结束标记
+        if ocr.startswith('$') and ocr.endswith('$'):
+            pass
+        else:
+            if not ocr.startswith('```'):
+                ocr = '```\n' + ocr  # 添加代码块开始标记
+            if not ocr.endswith('```'):
+                ocr += '\n```'  # 添加代码块结束标记
         self.text_code.delete(1.0, tk.END)
         self.text_code.insert(tk.END, ocr)
     
     def addQuate2(self):
         ocr = self.text_code.get(1.0, "end-1c")
+        if ocr.startswith('$') and ocr.endswith('$'):
+            return  # 已经是数学公式格式，不再添加代码块标记
         if not ocr.startswith('```'):
             ocr = '```\n' + ocr  # 添加代码块开始标记
         if not ocr.endswith('```'):
@@ -537,7 +542,12 @@ class FolderImageBrowser:
         text = self.text_code.get(start, end)
         if len(text) >= 0:
             # text = '    ' + text.replace('\n', '\n    ')
-            text = '\n'.join(['    ' + line for line in text.split('\n')])
+            lines = text.split('\n')
+            for i in range(len(lines)):
+                if lines[i].startswith('```') or lines[i].startswith('$$'):
+                    continue
+                lines[i] = '    ' + lines[i]
+            text = '\n'.join(lines)
             self.text_code.delete(start, end)
             self.text_code.insert(start, text)
             # 保留之前选择行
