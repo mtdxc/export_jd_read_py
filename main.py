@@ -1,6 +1,7 @@
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
@@ -11,7 +12,6 @@ COOKIE_FILE = "cookies.json"
 Data_Folder = "./output"
 
 # 需要下载电子书的id列表
-Download_Book_List = [30622790]
 Download_Book_List = [30751446]
 
 
@@ -246,10 +246,10 @@ def downloadBook(bookIndex, bookCount, driver: webdriver.Chrome, bookId):
 
 
 def main():
-
-    options = webdriver.ChromeOptions()
+    options = webdriver.EdgeOptions()
     options.add_argument("--start-maximized")  # 最大化窗口
-    driver = webdriver.Chrome(options=options)
+    service = EdgeService(executable_path="d:\msedgedriver.exe")
+    driver = webdriver.Edge(service=service, options=options)
 
     try:
         if checkLoginData():
