@@ -33,6 +33,8 @@ class FolderImageBrowser:
         self.current_pil_image = None
         self.ocr = None
         self.item = None
+        self.dir = None
+        self.md_file = None
         self.selection_rect_id = None
         self.drag_start = None
         self.drag_mode = None
@@ -47,11 +49,12 @@ class FolderImageBrowser:
         top.pack(fill=tk.X, padx=8, pady=8)
 
         tk.Button(top, text="打开assets", command=self.open_folder).pack(side=tk.LEFT)
-        
-        self.chk_zip_var = tk.IntVar(value=0)
-        tk.Checkbutton(top, text="生成ZIP", variable=self.chk_zip_var).pack(side=tk.LEFT)
+        tk.Button(top, text="打开MD", command=self.open_md).pack(side=tk.LEFT)
 
-        tk.Button(top, text="处理MD", command=self.open_md).pack(side=tk.LEFT)
+        self.chk_formula = tk.IntVar(value=0)
+        tk.Checkbutton(top, text="替换公式", variable=self.chk_formula).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(top, text="生成Zip", command=lambda: self.open_md2(True)).pack(side=tk.LEFT)
+        tk.Button(top, text="生成MD", command=lambda: self.open_md2(False)).pack(side=tk.LEFT)
 
         self.btn_prev = tk.Button(top, text="上一张", command=self.prev_image, state=tk.DISABLED)
         self.btn_prev.pack(side=tk.LEFT, padx=(8, 0))
@@ -360,7 +363,7 @@ class FolderImageBrowser:
         self.resize_handle = None
         self.drag_origin_rect = None
 
-    def process_md(self, md_file_path, to_zip):
+    def process_md(self, md_file_path, to_zip, formula):
         imgs = []
         snippet = ""
         with open(md_file_path, 'r', encoding='utf-8') as f:
@@ -390,11 +393,12 @@ class FolderImageBrowser:
             try:
                 item = self.ocr.find(img) if self.ocr else None
                 if item and len(item[2]) > 0:
-                    print(f"替换图片{pos}: {img}")
+                    if item[2].startswith("$") and item[2].endswith("$") and not formula:
+                        raise ValueError(f"跳过公式")
                     snippet = snippet.replace(f'![]({img})', item[2])
                     continue  # 已替换文本，不再添加图片到 ZIP 中
             except Exception as e:
-                print(f"处理图片{pos} {img} 时发生错误: {str(e)}\n", file=sys.stderr)
+                print(f"处理图片{pos} {img} 时发生错误: {str(e)}", file=sys.stderr)
                 
             # 没有找到 OCR 记录或记录为空，才添加图片到 ZIP 中
             if zf and Path(img).is_file():
@@ -408,6 +412,16 @@ class FolderImageBrowser:
                 f.write(snippet)
         print(f"已生成文件: {dst_file}")
 
+    def open_md2(self, to_zip):
+        if not self.md_file:
+            self.md_file = filedialog.askopenfilename(
+                title="选择md文件",
+                filetypes=[("Markdown files", "*.md")]
+                )
+        if not self.md_file:
+            return
+        self.process_md(self.md_file, to_zip, bool(self.chk_formula.get()))
+
     def open_md(self):
         md_file = filedialog.askopenfilename(
             title="选择md文件",
@@ -416,7 +430,38 @@ class FolderImageBrowser:
         )
         if not md_file:
             return
-        self.process_md(md_file, bool(self.chk_zip_var.get()))
+        self.md_file = md_file
+        self.dir = os.path.dirname(md_file)
+        os.chdir(self.dir)  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
+        imgs = []
+        with open(md_file, 'r', encoding='utf-8') as f:
+            snippet = f.read()
+            # 获取markdown中的图片链接
+            md_imgs = re.findall(r'!\[\]\(([^)]+)\)', snippet, re.MULTILINE)
+            print(f"{md_file} 找到 {len(md_imgs)} 张图片链接，正在检查图片文件...")
+            simg = set()
+            for img in md_imgs: 
+                # 去重
+                if img in simg:
+                    continue
+                simg.add(img)
+                f = Path(img)
+                if f.is_file():  # 触发文件存在检查，提前捕获潜在的路径问题
+                    imgs.append(f)
+                else:
+                    print(f"略过不存在的图片: {img}")
+        if len(imgs) == 0:
+            messagebox.showwarning("提示", "未找到任何图片链接或文件内容为空。")
+            return
+
+        self.btn_pages.config(text=f" / {len(imgs)} :")
+        self.root.title(f'asset浏览器 - {self.dir}')
+
+        self.ocr = ZaiOcr()
+        self.ocr.initDb("ocr_cache.db")
+        self.image_paths = imgs
+        self.index = 0
+        self.show_current_image()
 
     def open_folder(self):
         folder = filedialog.askdirectory(title="选择图片文件夹")
@@ -437,7 +482,7 @@ class FolderImageBrowser:
 
         self.btn_pages.config(text=f" / {len(paths)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
-        
+        self.md_file = None  # 切换到文件夹浏览时，重置当前 Markdown 文件状态
         self.ocr = ZaiOcr()
         self.ocr.initDb("ocr_cache.db")
         self.image_paths = paths
