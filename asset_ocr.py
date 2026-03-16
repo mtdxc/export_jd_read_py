@@ -63,9 +63,10 @@ class FolderImageBrowser:
 
         tk.Button(top, text="删除", command=self.delete_image).pack(side=tk.LEFT)
 
-        self.text_index = tk.Text(top, height=1, width=3)
-        self.text_index.pack(side=tk.LEFT, padx=(8, 0))
-        self.text_index.bind("<Return>", self.jump_to_index)
+        self.index_var = tk.IntVar(value=0)
+        text_index = tk.Entry(top, textvariable=self.index_var, width=3)
+        text_index.pack(side=tk.LEFT, padx=(8, 0))
+        text_index.bind("<Return>", self.jump_to_index)
 
         # 增加空按钮用于去除编辑框的焦点
         self.btn_pages = tk.Button(top, text="/", command=lambda: self.root.focus())
@@ -120,11 +121,8 @@ class FolderImageBrowser:
         tk.Button(text_button_frame, text="del 1.", command=self.delete_lineNo).pack(side=tk.LEFT)
 
         tk.Button(text_button_frame, text="Pad", command=self.addPadding).pack(side=tk.LEFT, padx=(8, 0))
-
         tk.Button(text_button_frame, text="del |", command=self.delete_table).pack(side=tk.LEFT)
-
         tk.Button(text_button_frame, text="del \\", command=self.delete_quate).pack(side=tk.LEFT)
-
         tk.Button(text_button_frame, text="strip", command=self.delete_strip).pack(side=tk.LEFT)
 
         self.text_remove = tk.Text(text_button_frame, height=1, width=5)
@@ -621,8 +619,7 @@ class FolderImageBrowser:
         self._clear_selection()
 
         total = len(self.image_paths)
-        self.text_index.delete(1.0, tk.END)
-        self.text_index.insert(tk.END, str(self.index + 1))
+        self.index_var.set(self.index + 1)
         self.status_var.set(img_path.name)
 
         self.btn_prev.config(state=tk.NORMAL if self.index > 0 else tk.DISABLED)
@@ -646,7 +643,7 @@ class FolderImageBrowser:
 
     def jump_to_index(self, _event):
         try:
-            idx = int(self.text_index.get(1.0, "end-1c").strip()) - 1
+            idx = self.index_var.get() - 1
             if 0 <= idx < len(self.image_paths):
                 self.check_text_changed()
                 self.index = idx
