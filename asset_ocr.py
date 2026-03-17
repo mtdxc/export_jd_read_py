@@ -30,6 +30,7 @@ class FolderImageBrowser:
         self.image_paths = []
         self.index = -1
         self.current_tk_image = None
+        self.next_tk_image = None
         self.current_pil_image = None
         self.ocr = None
         self.item = None
@@ -90,12 +91,34 @@ class FolderImageBrowser:
 
         # 左侧：图片显示区
         image_frame = tk.Frame(self.content_pane)
+        iamge_button_frame = tk.Frame(image_frame, height=32)
+        iamge_button_frame.pack(side=tk.TOP, fill=tk.X, expand=False, pady=(0, 4))
+        iamge_button_frame.pack_propagate(False)
+        self.chk_next = tk.IntVar(value=0)
+        tk.Checkbutton(
+            iamge_button_frame,
+            text="show next",
+            variable=self.chk_next,
+            command=self.show_current_image,
+        ).pack(side=tk.LEFT)
+        tk.Button(iamge_button_frame, text="识别2", command=self.recognize_image2).pack(side=tk.LEFT)
 
-        self.image_canvas = tk.Canvas(image_frame, bg="#1e1e1e", highlightthickness=0)
-        self.image_canvas.pack(fill=tk.BOTH, expand=True)
+        image_canvas_frame = tk.Frame(image_frame)
+        image_canvas_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas_v_scroll = tk.Scrollbar(image_canvas_frame, orient=tk.VERTICAL)
+        self.image_canvas = tk.Canvas(
+            image_canvas_frame,
+            bg="#1e1e1e",
+            highlightthickness=0,
+            yscrollcommand=self.canvas_v_scroll.set,
+        )
+        self.canvas_v_scroll.config(command=self.image_canvas.yview)
+        self.image_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.image_canvas.bind("<ButtonPress-1>", self._on_canvas_press)
         self.image_canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.image_canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        self.image_canvas.bind("<MouseWheel>", self._on_canvas_mousewheel)
 
         # 右侧：文本编辑区
         text_frame = tk.Frame(self.content_pane, width=360)
@@ -154,7 +177,7 @@ class FolderImageBrowser:
         self.root.bind("<Alt-Up>", lambda e: self.recognize_image())
         self.root.bind("<Alt-Down>", lambda e: self.addQuate())
         self.root.bind("<Alt-r>", lambda e: self.recognize_image())
-        self.root.bind("<Alt-v>", lambda e: self.addQuate())
+        self.root.bind("<Alt-v>", lambda e: self.recognize_image2())
         self.root.bind("<Configure>", self._on_resize)
 
     def _focus_in_text_widget(self):
@@ -290,10 +313,41 @@ class FolderImageBrowser:
         iy1 = min(max(iy1, 0), oh)
         return ix0, iy0, ix1, iy1
 
+    def _on_canvas_mousewheel(self, event):
+        region = self.image_canvas.cget("scrollregion")
+        if not region:
+            return
+        top, bottom = self.image_canvas.yview()
+        if top <= 0.0 and bottom >= 1.0:
+            return
+        self.image_canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    def _resize_by_ratio(self, pil_image, ratio):
+        ow, oh = pil_image.size
+        if ow <= 0 or oh <= 0 or ratio <= 0:
+            return pil_image.copy()
+        nw = max(int(round(ow * ratio)), 1)
+        nh = max(int(round(oh * ratio)), 1)
+        if nw == ow and nh == oh:
+            return pil_image.copy()
+        return pil_image.resize((nw, nh), Image.Resampling.LANCZOS)
+
+    def _toggle_canvas_scrollbar(self, content_h, viewport_h):
+        need_scroll = content_h > viewport_h + 1
+        if need_scroll:
+            if not self.canvas_v_scroll.winfo_ismapped():
+                self.canvas_v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        else:
+            if self.canvas_v_scroll.winfo_ismapped():
+                self.canvas_v_scroll.pack_forget()
+            self.image_canvas.yview_moveto(0)
+
     def _on_canvas_press(self, event):
         if self.current_tk_image is None:
             return
-        x, y = self._clamp_to_display(event.x, event.y)
+        x = self.image_canvas.canvasx(event.x)
+        y = self.image_canvas.canvasy(event.y)
+        x, y = self._clamp_to_display(x, y)
         current_rect = self._get_current_rect()
         if current_rect and self._point_in_rect(x, y, current_rect):
             self.drag_start = (x, y)
@@ -316,7 +370,9 @@ class FolderImageBrowser:
     def _on_canvas_drag(self, event):
         if self.drag_start is None:
             return
-        x, y = self._clamp_to_display(event.x, event.y)
+        x = self.image_canvas.canvasx(event.x)
+        y = self.image_canvas.canvasy(event.y)
+        x, y = self._clamp_to_display(x, y)
 
         if self.drag_mode == "create":
             if self.selection_rect_id is None:
@@ -393,9 +449,12 @@ class FolderImageBrowser:
             try:
                 item = self.ocr.find(img) if self.ocr else None
                 if item and len(item[2]) > 0:
-                    if item[2].startswith("$") and item[2].endswith("$") and not formula:
+                    code  = item[2]
+                    if code.startswith("$") and code.endswith("$") and not formula:
                         raise ValueError(f"跳过公式")
-                    snippet = snippet.replace(f'![]({img})', item[2])
+                    if code == '``':
+                        code = ''
+                    snippet = snippet.replace(f'![]({img})', code)
                     continue  # 已替换文本，不再添加图片到 ZIP 中
             except Exception as e:
                 print(f"处理图片{pos} {img} 时发生错误: {str(e)}", file=sys.stderr)
@@ -514,6 +573,38 @@ class FolderImageBrowser:
             elif self.current_pil_image:
                 cropped = self.current_pil_image.crop(self.selection_bbox_image)
                 self.updateText(self.ocr.ocr_code(cropped))
+
+    def recognize_image2(self):
+        if self.ocr is None:
+            return
+        if self.index < 0 or self.index >= len(self.image_paths):
+            return
+        if self.index >= len(self.image_paths) - 1:
+            messagebox.showwarning("提示", "当前已是最后一张，无法进行双图识别。")
+            return
+
+        current_path = self.image_paths[self.index]
+        next_path = self.image_paths[self.index + 1]
+        try:
+            with Image.open(current_path) as current_img, Image.open(next_path) as next_img:
+                current_rgb = current_img.convert("RGB")
+                next_rgb = next_img.convert("RGB")
+
+                target_width = max(current_rgb.width, next_rgb.width)
+                target_height = current_rgb.height + next_rgb.height
+                print(f"双图识别: 当前 {current_path} ({current_rgb.width}x{current_rgb.height}), 下一张 {next_path} ({next_rgb.width}x{next_rgb.height}), 目标尺寸 {target_width}x{target_height}")
+                merged = Image.new("RGB", (target_width, target_height), color=(255, 255, 255))
+                merged.paste(current_rgb, (0, 0))
+                merged.paste(next_rgb, (0, current_rgb.height))
+                max_size = 2000
+                if target_width > max_size or target_height > max_size:
+                    print(f"双图尺寸过大，尝试缩放后识别")
+                    scale = min(max_size / target_width, max_size / target_height)
+                    merged = self._resize_by_ratio(merged, scale)
+                self.updateText(self.ocr.ocr_code(merged))
+                self.ocr.update((next_path, "", "``"))  # 预先创建下一张图的空记录，方便后续快速更新
+        except Exception as e:
+            messagebox.showerror("错误", f"双图识别失败：\n{current_path}\n{next_path}\n\n{e}")
 
     def updateText(self, item):
         self.text_ocr.delete(1.0, tk.END)
@@ -646,21 +737,54 @@ class FolderImageBrowser:
             messagebox.showerror("错误", f"无法打开图片：\n{img_path}\n\n{e}")
             return
 
-        # 按窗口大小等比缩放
+        # 两图时按较宽图适配画布宽度，小图沿用同一缩放比；超高使用纵向滚动
         w = max(self.image_canvas.winfo_width(), 300)
         h = max(self.image_canvas.winfo_height(), 200)
-        display_img = self.current_pil_image.copy()
-        display_img.thumbnail((w - 20, h - 20), Image.Resampling.LANCZOS)
+        padding = 10
+        gap = 10
+        max_w = max(w - padding * 2, 1)
+
+        has_next = self.chk_next.get() and self.index < len(self.image_paths) - 1
+        next_original = None
+        if has_next:
+            next_img_path = self.image_paths[self.index + 1]
+            try:
+                with Image.open(next_img_path) as next_img:
+                    next_original = next_img.copy()
+            except Exception:
+                next_original = None
+
+        base_width = self.current_pil_image.width
+        if next_original is not None:
+            base_width = max(base_width, next_original.width)
+        scale_ratio = max_w / max(base_width, 1) if base_width > max_w else 1.0
+
+        display_img = self._resize_by_ratio(self.current_pil_image, scale_ratio)
+        next_display_img = self._resize_by_ratio(next_original, scale_ratio) if next_original is not None else None
 
         self.current_tk_image = ImageTk.PhotoImage(display_img)
+        self.next_tk_image = None
         self.image_canvas.delete("all")
 
         dw, dh = display_img.size
         ox = (w - dw) // 2
-        oy = (h - dh) // 2
+        oy = padding
         self.display_offset = (ox, oy)
         self.display_size = (dw, dh)
         self.image_canvas.create_image(ox, oy, anchor=tk.NW, image=self.current_tk_image)
+
+        content_h = oy + dh + padding
+        if next_display_img is not None:
+            self.next_tk_image = ImageTk.PhotoImage(next_display_img)
+            ndw, ndh = next_display_img.size
+            nox = (w - ndw) // 2
+            noy = oy + dh + gap
+            self.image_canvas.create_image(nox, noy, anchor=tk.NW, image=self.next_tk_image)
+            content_h = noy + ndh + padding
+
+        self.image_canvas.configure(scrollregion=(0, 0, w, max(content_h, h)))
+        self._toggle_canvas_scrollbar(content_h, h)
+
         self._clear_selection()
 
         total = len(self.image_paths)
