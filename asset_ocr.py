@@ -30,7 +30,7 @@ class FolderImageBrowser:
         self.image_paths = []
         self.index = -1
         self.current_tk_image = None
-        self.next_tk_image = None
+        self.next_tk_image = []
         self.current_pil_image = None
         self.ocr = None
         self.item = None
@@ -91,17 +91,23 @@ class FolderImageBrowser:
 
         # 左侧：图片显示区
         image_frame = tk.Frame(self.content_pane)
-        iamge_button_frame = tk.Frame(image_frame, height=32)
-        iamge_button_frame.pack(side=tk.TOP, fill=tk.X, expand=False, pady=(0, 4))
-        iamge_button_frame.pack_propagate(False)
-        self.chk_next = tk.IntVar(value=0)
-        tk.Checkbutton(
-            iamge_button_frame,
-            text="show next",
-            variable=self.chk_next,
+        image_button_frame = tk.Frame(image_frame, height=32)
+        image_button_frame.pack(side=tk.TOP, fill=tk.X, expand=False, pady=(0, 4))
+        image_button_frame.pack_propagate(False)
+
+        self.next_count_var = tk.IntVar(value=0)
+        next_count_entry = tk.Spinbox(
+            image_button_frame,
+            from_=0,
+            to=5,
+            textvariable=self.next_count_var,
+            width=2,
             command=self.show_current_image,
-        ).pack(side=tk.LEFT)
-        tk.Button(iamge_button_frame, text="识别2", command=self.recognize_image2).pack(side=tk.LEFT)
+        )
+        next_count_entry.pack(side=tk.LEFT, padx=(4, 8))
+        next_count_entry.bind("<Return>", self.show_current_image)
+        next_count_entry.bind("<FocusOut>", self.show_current_image)
+        tk.Button(image_button_frame, text="多图识别", command=self.recognize_image2).pack(side=tk.LEFT)
 
         image_canvas_frame = tk.Frame(image_frame)
         image_canvas_frame.pack(fill=tk.BOTH, expand=True)
@@ -183,6 +189,18 @@ class FolderImageBrowser:
     def _focus_in_text_widget(self):
         widget = self.root.focus_get()
         return isinstance(widget, tk.Text)
+
+    def _change_working_dir(self, directory):
+        self.dir = directory
+        os.chdir(directory)
+
+    def _reset_ocr(self):
+        self.ocr = ZaiOcr()
+        self.ocr.initDb("ocr_cache.db")
+
+    def _get_preview_paths(self, next_count):
+        end_index = min(self.index + max(next_count, 0), len(self.image_paths) - 1)
+        return self.image_paths[self.index : end_index + 1]
 
     def _clear_selection(self):
         if self.selection_rect_id is not None:
@@ -490,8 +508,7 @@ class FolderImageBrowser:
         if not md_file:
             return
         self.md_file = md_file
-        self.dir = os.path.dirname(md_file)
-        os.chdir(self.dir)  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
+        self._change_working_dir(os.path.dirname(md_file))  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
         imgs = []
         with open(md_file, 'r', encoding='utf-8') as f:
             snippet = f.read()
@@ -516,8 +533,7 @@ class FolderImageBrowser:
         self.btn_pages.config(text=f" / {len(imgs)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
 
-        self.ocr = ZaiOcr()
-        self.ocr.initDb("ocr_cache.db")
+        self._reset_ocr()
         self.image_paths = imgs
         self.index = 0
         self.show_current_image()
@@ -527,9 +543,8 @@ class FolderImageBrowser:
         if not folder:
             return
 
-        self.dir = os.path.dirname(folder)
+        self._change_working_dir(os.path.dirname(folder))
         dirname = os.path.basename(folder)
-        os.chdir(self.dir)  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
         paths = []
         for p in sorted(Path(dirname).iterdir(), key=lambda x: x.name.lower()):
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS:
@@ -542,8 +557,7 @@ class FolderImageBrowser:
         self.btn_pages.config(text=f" / {len(paths)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
         self.md_file = None  # 切换到文件夹浏览时，重置当前 Markdown 文件状态
-        self.ocr = ZaiOcr()
-        self.ocr.initDb("ocr_cache.db")
+        self._reset_ocr()
         self.image_paths = paths
         self.index = 0
         self.show_current_image()
@@ -579,32 +593,42 @@ class FolderImageBrowser:
             return
         if self.index < 0 or self.index >= len(self.image_paths):
             return
-        if self.index >= len(self.image_paths) - 1:
-            messagebox.showwarning("提示", "当前已是最后一张，无法进行双图识别。")
+        next_count = self.next_count_var.get()
+        if next_count <= 0:
+            return self.recognize_image()
+
+        selected_paths = self._get_preview_paths(next_count)
+        if len(selected_paths) <= 1:
+            messagebox.showwarning("提示", "后续图片数量不足，无法进行多图识别。")
             return
 
-        current_path = self.image_paths[self.index]
-        next_path = self.image_paths[self.index + 1]
         try:
-            with Image.open(current_path) as current_img, Image.open(next_path) as next_img:
-                current_rgb = current_img.convert("RGB")
-                next_rgb = next_img.convert("RGB")
+            images = []
+            target_width = 0
+            target_height = 0
+            for path in selected_paths:
+                with Image.open(path) as img:
+                    rgb = img.convert("RGB")
+                    images.append((path, rgb.copy()))
+                    target_width = max(target_width, rgb.width)
+                    target_height += rgb.height
 
-                target_width = max(current_rgb.width, next_rgb.width)
-                target_height = current_rgb.height + next_rgb.height
-                print(f"双图识别: 当前 {current_path} ({current_rgb.width}x{current_rgb.height}), 下一张 {next_path} ({next_rgb.width}x{next_rgb.height}), 目标尺寸 {target_width}x{target_height}")
-                merged = Image.new("RGB", (target_width, target_height), color=(255, 255, 255))
-                merged.paste(current_rgb, (0, 0))
-                merged.paste(next_rgb, (0, current_rgb.height))
-                max_size = 2000
-                if target_width > max_size or target_height > max_size:
-                    print(f"双图尺寸过大，尝试缩放后识别")
-                    scale = min(max_size / target_width, max_size / target_height)
-                    merged = self._resize_by_ratio(merged, scale)
-                self.updateText(self.ocr.ocr_code(merged))
-                self.ocr.update((next_path, "", "``"))  # 预先创建下一张图的空记录，方便后续快速更新
+            merged = Image.new("RGB", (target_width, target_height), color=(255, 255, 255))
+            offset_y = 0
+            for _, rgb in images:
+                merged.paste(rgb, (0, offset_y))
+                offset_y += rgb.height
+
+            print(f"识别{len(images)}张图, 目标尺寸 {target_width}x{target_height}")
+            max_size = 2500
+            if target_width > max_size or target_height > max_size:
+                scale = min(max_size / target_width, max_size / target_height)
+                merged = self._resize_by_ratio(merged, scale)
+            self.updateText(self.ocr.ocr_code(merged))
+            for path in selected_paths[1:]:
+                self.ocr.update((path, "", "``"))
         except Exception as e:
-            messagebox.showerror("错误", f"双图识别失败：\n{current_path}\n{next_path}\n\n{e}")
+            messagebox.showerror("错误", f"多图识别失败：\n{e}")
 
     def updateText(self, item):
         self.text_ocr.delete(1.0, tk.END)
@@ -674,22 +698,20 @@ class FolderImageBrowser:
             end = "end-1c"
 
         text = self.text_code.get(start, end)
-        if len(text) >= 0:
-            # text = '    ' + text.replace('\n', '\n    ')
-            lines = text.split('\n')
-            for i in range(len(lines)):
-                if lines[i].startswith('```') or lines[i].startswith('$$'):
-                    continue
-                lines[i] = '    ' + lines[i]
-            text = '\n'.join(lines)
-            self.text_code.delete(start, end)
-            self.text_code.insert(start, text)
-            # 保留之前选择行
-            new_end = self.text_code.index(f"{start}+{len(text)}c")
-            self.text_code.tag_remove(tk.SEL, "1.0", tk.END)
-            self.text_code.tag_add(tk.SEL, start, new_end)
-            self.text_code.mark_set(tk.INSERT, new_end)
-            self.text_code.see(tk.INSERT)
+        lines = text.split('\n')
+        for i in range(len(lines)):
+            if lines[i].startswith('```') or lines[i].startswith('$$'):
+                continue
+            lines[i] = '    ' + lines[i]
+        text = '\n'.join(lines)
+        self.text_code.delete(start, end)
+        self.text_code.insert(start, text)
+        # 保留之前选择行
+        new_end = self.text_code.index(f"{start}+{len(text)}c")
+        self.text_code.tag_remove(tk.SEL, "1.0", tk.END)
+        self.text_code.tag_add(tk.SEL, start, new_end)
+        self.text_code.mark_set(tk.INSERT, new_end)
+        self.text_code.see(tk.INSERT)
 
     def delete_table(self):
         self.processTextWithSelect(self.text_code, lambda text: text.replace('|', ''))
@@ -699,7 +721,7 @@ class FolderImageBrowser:
 
     def delete_text(self): # 删除选中的文本
         txt = self.text_remove.get(1.0, "end-1c")
-        if len(txt):
+        if txt:
             self.processTextWithSelect(self.text_code, lambda text: text.replace(txt, ''))
 
     def delete_lineNo(self): # 删除行号
@@ -737,33 +759,33 @@ class FolderImageBrowser:
             messagebox.showerror("错误", f"无法打开图片：\n{img_path}\n\n{e}")
             return
 
-        # 两图时按较宽图适配画布宽度，小图沿用同一缩放比；超高使用纵向滚动
+        # 当前图与后续 N 张图按最宽图统一缩放；超高使用纵向滚动
         w = max(self.image_canvas.winfo_width(), 300)
         h = max(self.image_canvas.winfo_height(), 200)
         padding = 10
         gap = 10
         max_w = max(w - padding * 2, 1)
 
-        has_next = self.chk_next.get() and self.index < len(self.image_paths) - 1
-        next_original = None
-        if has_next:
-            next_img_path = self.image_paths[self.index + 1]
+        next_count = self.next_count_var.get()
+        preview_images = [(img_path, self.current_pil_image.copy())]
+        for next_img_path in self._get_preview_paths(next_count)[1:]:
             try:
                 with Image.open(next_img_path) as next_img:
-                    next_original = next_img.copy()
+                    preview_images.append((next_img_path, next_img.copy()))
             except Exception:
-                next_original = None
+                continue
 
-        base_width = self.current_pil_image.width
-        if next_original is not None:
-            base_width = max(base_width, next_original.width)
+        base_width = max(image.width for _, image in preview_images)
         scale_ratio = max_w / max(base_width, 1) if base_width > max_w else 1.0
 
-        display_img = self._resize_by_ratio(self.current_pil_image, scale_ratio)
-        next_display_img = self._resize_by_ratio(next_original, scale_ratio) if next_original is not None else None
+        scaled_images = []
+        for path, preview_image in preview_images:
+            scaled_images.append((path, self._resize_by_ratio(preview_image, scale_ratio)))
+
+        display_img = scaled_images[0][1]
 
         self.current_tk_image = ImageTk.PhotoImage(display_img)
-        self.next_tk_image = None
+        self.next_tk_image = []
         self.image_canvas.delete("all")
 
         dw, dh = display_img.size
@@ -774,13 +796,15 @@ class FolderImageBrowser:
         self.image_canvas.create_image(ox, oy, anchor=tk.NW, image=self.current_tk_image)
 
         content_h = oy + dh + padding
-        if next_display_img is not None:
-            self.next_tk_image = ImageTk.PhotoImage(next_display_img)
+        current_y = oy + dh + gap
+        for _, next_display_img in scaled_images[1:]:
+            next_tk_image = ImageTk.PhotoImage(next_display_img)
+            self.next_tk_image.append(next_tk_image)
             ndw, ndh = next_display_img.size
             nox = (w - ndw) // 2
-            noy = oy + dh + gap
-            self.image_canvas.create_image(nox, noy, anchor=tk.NW, image=self.next_tk_image)
-            content_h = noy + ndh + padding
+            self.image_canvas.create_image(nox, current_y, anchor=tk.NW, image=next_tk_image)
+            content_h = current_y + ndh + padding
+            current_y += ndh + gap
 
         self.image_canvas.configure(scrollregion=(0, 0, w, max(content_h, h)))
         self._toggle_canvas_scrollbar(content_h, h)
@@ -793,7 +817,7 @@ class FolderImageBrowser:
 
         self.btn_prev.config(state=tk.NORMAL if self.index > 0 else tk.DISABLED)
         self.btn_next.config(state=tk.NORMAL if self.index < total - 1 else tk.DISABLED)
-        self.item = self.ocr.find(img_path)
+        self.item = self.ocr.find(img_path) if self.ocr else None
         if self.item is None:
             self.item = (str(img_path), "", "")
         self.updateText(self.item)
