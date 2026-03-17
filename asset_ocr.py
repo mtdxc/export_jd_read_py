@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-asset浏览器（支持上一张/下一张）
+md图片识别器
 """
 
 import re
@@ -23,7 +23,7 @@ SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
 class FolderImageBrowser:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("asset浏览器")
+        self.root.title("md图片识别器")
         self.root.geometry("1000x700")
         self.root.minsize(600, 400)
 
@@ -48,7 +48,7 @@ class FolderImageBrowser:
         top = tk.Frame(root)
         top.pack(fill=tk.X, padx=8, pady=8)
 
-        tk.Button(top, text="打开assets", command=self.open_folder).pack(side=tk.LEFT)
+        tk.Button(top, text="打开asset", command=self.open_folder).pack(side=tk.LEFT)
         tk.Button(top, text="打开MD", command=self.open_md).pack(side=tk.LEFT)
 
         self.chk_formula = tk.IntVar(value=0)
@@ -56,11 +56,8 @@ class FolderImageBrowser:
         tk.Button(top, text="生成Zip", command=lambda: self.open_md2(True)).pack(side=tk.LEFT)
         tk.Button(top, text="生成MD", command=lambda: self.open_md2(False)).pack(side=tk.LEFT)
 
-        self.btn_prev = tk.Button(top, text="上一张", command=self.prev_image, state=tk.DISABLED)
-        self.btn_prev.pack(side=tk.LEFT, padx=(8, 0))
-
-        self.btn_next = tk.Button(top, text="下一张", command=self.next_image, state=tk.DISABLED)
-        self.btn_next.pack(side=tk.LEFT)
+        tk.Button(top, text="<", command=lambda: self.prev_image()).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(top, text=">", command=lambda: self.next_image()).pack(side=tk.LEFT)
 
         tk.Button(top, text="识别", command=self.recognize_image).pack(side=tk.LEFT, padx=(5, 0))
         tk.Button(top, text="删除", command=self.delete_image).pack(side=tk.LEFT)
@@ -96,6 +93,8 @@ class FolderImageBrowser:
         self.next_count_var = tk.IntVar(value=1)
         tk.Spinbox(image_top_frame, from_=1, to=5, width=2, textvariable=self.next_count_var, command=self.show_current_image).pack(side=tk.LEFT, padx=(8, 0))
         tk.Button(image_top_frame, text="多图识别", command=self.recognize_image2).pack(side=tk.LEFT, padx=(5, 0))
+        tk.Button(image_top_frame, text="<<", command=lambda: self.prev_image(self.next_count_var.get())).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(image_top_frame, text=">>", command=lambda: self.next_image(self.next_count_var.get())).pack(side=tk.LEFT)
 
         self.image_canvas = tk.Canvas(image_frame, bg="#1e1e1e", highlightthickness=0)
         self.image_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -165,6 +164,9 @@ class FolderImageBrowser:
         self.root.bind("<Alt-Down>", lambda e: self.addQuate())
         self.root.bind("<Alt-r>", lambda e: self.recognize_image())
         self.root.bind("<Alt-v>", lambda e: self.recognize_image2())
+        self.root.bind("<Control-Up>", lambda e: self.recognize_image2())
+        self.root.bind("<Control-Left>", lambda e: self.prev_image(self.next_count_var.get()))
+        self.root.bind("<Control-Right>", lambda e: self.next_image(self.next_count_var.get()))
         self.root.bind("<Configure>", self._on_resize)
 
     def getDisplayImage(self):
@@ -761,23 +763,25 @@ class FolderImageBrowser:
         self.index_var.set(self.index + 1)
         self.status_var.set(img_path.name)
 
-        self.btn_prev.config(state=tk.NORMAL if self.index > 0 else tk.DISABLED)
-        self.btn_next.config(state=tk.NORMAL if self.index < total - 1 else tk.DISABLED)
         self.item = self.ocr.find(img_path) if self.ocr else None
         if self.item is None:
             self.item = (str(img_path), "", "")
         self.updateText(self.item)
 
-    def prev_image(self):
+    def prev_image(self, delta = 1):
         if self.index > 0:
             self.check_text_changed()
-            self.index -= 1
+            self.index -= delta
+            if self.index < 0:
+                self.index = 0
             self.show_current_image()
 
-    def next_image(self):
+    def next_image(self, delta = 1):
         if self.index < len(self.image_paths) - 1:
             self.check_text_changed()
-            self.index += 1
+            self.index += delta
+            if self.index >= len(self.image_paths):
+                self.index = len(self.image_paths) - 1
             self.show_current_image()
 
     def jump_to_index(self, _event):
