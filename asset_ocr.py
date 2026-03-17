@@ -63,7 +63,6 @@ class FolderImageBrowser:
         self.btn_next.pack(side=tk.LEFT)
 
         tk.Button(top, text="识别", command=self.recognize_image).pack(side=tk.LEFT, padx=(5, 0))
-
         tk.Button(top, text="删除", command=self.delete_image).pack(side=tk.LEFT)
 
         self.index_var = tk.IntVar(value=0)
@@ -90,12 +89,23 @@ class FolderImageBrowser:
 
         # 左侧：图片显示区
         image_frame = tk.Frame(self.content_pane)
+        # 移动多图相关控件到 image_frame 顶部
+        image_top_frame = tk.Frame(image_frame)
+        image_top_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 4))
+
+        self.next_count_var = tk.IntVar(value=1)
+        tk.Spinbox(image_top_frame, from_=1, to=5, width=2, textvariable=self.next_count_var, command=self.show_current_image).pack(side=tk.LEFT, padx=(8, 0))
+        tk.Button(image_top_frame, text="多图识别", command=self.recognize_image2).pack(side=tk.LEFT, padx=(5, 0))
 
         self.image_canvas = tk.Canvas(image_frame, bg="#1e1e1e", highlightthickness=0)
-        self.image_canvas.pack(fill=tk.BOTH, expand=True)
+        self.image_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.image_vscroll = tk.Scrollbar(image_frame, orient=tk.VERTICAL, command=self.image_canvas.yview)
+        self.image_canvas.configure(yscrollcommand=self.image_vscroll.set)
         self.image_canvas.bind("<ButtonPress-1>", self._on_canvas_press)
         self.image_canvas.bind("<B1-Motion>", self._on_canvas_drag)
         self.image_canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        self.image_canvas.bind("<MouseWheel>", self._on_mouse_wheel)
 
         # 右侧：文本编辑区
         text_frame = tk.Frame(self.content_pane, width=360)
@@ -154,8 +164,48 @@ class FolderImageBrowser:
         self.root.bind("<Alt-Up>", lambda e: self.recognize_image())
         self.root.bind("<Alt-Down>", lambda e: self.addQuate())
         self.root.bind("<Alt-r>", lambda e: self.recognize_image())
-        self.root.bind("<Alt-v>", lambda e: self.addQuate())
+        self.root.bind("<Alt-v>", lambda e: self.recognize_image2())
         self.root.bind("<Configure>", self._on_resize)
+
+    def getDisplayImage(self):
+        if self.index < 0 or self.index >= len(self.image_paths):
+            return None
+
+        pos = []
+        if self.next_count_var.get() < 2:
+            with Image.open(self.image_paths[self.index]) as img:
+                return (img.copy(), pos)
+
+        end = self._get_end_index()
+        images = []
+        target_width = 0
+        target_height = 0
+        index = self.index
+        while index < end:
+            path = self.image_paths[index]
+            with Image.open(path) as img:
+                rgb = img.convert("RGB")
+                images.append((index, rgb.copy()))
+                target_width = max(target_width, rgb.width)
+                target_height += rgb.height
+            index += 1
+        offset_y = 0
+        merged = Image.new("RGB", (target_width, target_height), color=(255, 255, 255))
+        for img_index, rgb in images:
+            merged.paste(rgb, (0, offset_y))
+            pos.append((img_index, offset_y/target_height))
+            offset_y += rgb.height
+        return (merged, pos)
+
+    def _get_end_index(self):
+        end = self.index + self.next_count_var.get()
+        if end > len(self.image_paths):
+            end = len(self.image_paths)
+        return end
+
+    def _init_ocr(self):
+        self.ocr = ZaiOcr()
+        self.ocr.initDb("ocr_cache.db")
 
     def _focus_in_text_widget(self):
         widget = self.root.focus_get()
@@ -267,6 +317,19 @@ class FolderImageBrowser:
         y = min(max(y, oy), oy + dh)
         return x, y
 
+    def _update_image_scrollbar(self, image_height, canvas_height):
+        if image_height > canvas_height:
+            if not self.image_vscroll.winfo_ismapped():
+                self.image_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        elif self.image_vscroll.winfo_ismapped():
+            self.image_vscroll.pack_forget()
+
+    def _on_mouse_wheel(self, event):
+        if self.display_size[1] <= max(self.image_canvas.winfo_height(), 1):
+            return
+        step = -1 if event.delta > 0 else 1
+        self.image_canvas.yview_scroll(step, "units")
+
     def _canvas_to_image_bbox(self, x0, y0, x1, y1):
         if self.current_pil_image is None:
             return None
@@ -293,7 +356,9 @@ class FolderImageBrowser:
     def _on_canvas_press(self, event):
         if self.current_tk_image is None:
             return
-        x, y = self._clamp_to_display(event.x, event.y)
+        x = self.image_canvas.canvasx(event.x)
+        y = self.image_canvas.canvasy(event.y)
+        x, y = self._clamp_to_display(x, y)
         current_rect = self._get_current_rect()
         if current_rect and self._point_in_rect(x, y, current_rect):
             self.drag_start = (x, y)
@@ -316,7 +381,9 @@ class FolderImageBrowser:
     def _on_canvas_drag(self, event):
         if self.drag_start is None:
             return
-        x, y = self._clamp_to_display(event.x, event.y)
+        x = self.image_canvas.canvasx(event.x)
+        y = self.image_canvas.canvasy(event.y)
+        x, y = self._clamp_to_display(x, y)
 
         if self.drag_mode == "create":
             if self.selection_rect_id is None:
@@ -393,9 +460,12 @@ class FolderImageBrowser:
             try:
                 item = self.ocr.find(img) if self.ocr else None
                 if item and len(item[2]) > 0:
-                    if item[2].startswith("$") and item[2].endswith("$") and not formula:
+                    code = item[2]
+                    if code.startswith("$") and code.endswith("$") and not formula:
                         raise ValueError(f"跳过公式")
-                    snippet = snippet.replace(f'![]({img})', item[2])
+                    if code == "``": # 空注释直接删除图片
+                        code = ""
+                    snippet = snippet.replace(f'![]({img})', code)
                     continue  # 已替换文本，不再添加图片到 ZIP 中
             except Exception as e:
                 print(f"处理图片{pos} {img} 时发生错误: {str(e)}", file=sys.stderr)
@@ -457,8 +527,7 @@ class FolderImageBrowser:
         self.btn_pages.config(text=f" / {len(imgs)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
 
-        self.ocr = ZaiOcr()
-        self.ocr.initDb("ocr_cache.db")
+        self._init_ocr()
         self.image_paths = imgs
         self.index = 0
         self.show_current_image()
@@ -483,8 +552,7 @@ class FolderImageBrowser:
         self.btn_pages.config(text=f" / {len(paths)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
         self.md_file = None  # 切换到文件夹浏览时，重置当前 Markdown 文件状态
-        self.ocr = ZaiOcr()
-        self.ocr.initDb("ocr_cache.db")
+        self._init_ocr()
         self.image_paths = paths
         self.index = 0
         self.show_current_image()
@@ -501,6 +569,27 @@ class FolderImageBrowser:
         self.item = (str(img_path), '', '')
         self.updateText(self.item)
         self.root.focus()  # 删除后焦点回到窗口，避免误触文本编辑框快捷键
+
+    def recognize_image2(self):
+        if self.ocr is None:
+            return
+        if self.index < 0 or self.index >= len(self.image_paths):
+            return
+        max_size = 2500
+        merge = self.current_pil_image # self.getDisplayImage()  # 获取合并后的大图进行 OCR 识别
+        if merge is None:
+            return
+        if (merge.width > max_size or merge.height > max_size):
+            scale = min(max_size / merge.width, max_size / merge.height)
+            merge = merge.resize((int(merge.width * scale), int(merge.height * scale)), Image.Resampling.LANCZOS)
+        item = self.ocr.ocr_code(merge)
+        # print(f"进行多图识别，原图大小: {merge.size} 识别结果: {item}")
+        if item:
+            self.updateText(item)
+            end = self._get_end_index()
+            for index in range(self.index + 1, end):
+                img_path = str(self.image_paths[index])
+                self.ocr.update((img_path, '', '``'))
 
     def recognize_image(self):
         if self.index < 0 or self.index >= len(self.image_paths):
@@ -583,22 +672,20 @@ class FolderImageBrowser:
             end = "end-1c"
 
         text = self.text_code.get(start, end)
-        if len(text) >= 0:
-            # text = '    ' + text.replace('\n', '\n    ')
-            lines = text.split('\n')
-            for i in range(len(lines)):
-                if lines[i].startswith('```') or lines[i].startswith('$$'):
-                    continue
-                lines[i] = '    ' + lines[i]
-            text = '\n'.join(lines)
-            self.text_code.delete(start, end)
-            self.text_code.insert(start, text)
-            # 保留之前选择行
-            new_end = self.text_code.index(f"{start}+{len(text)}c")
-            self.text_code.tag_remove(tk.SEL, "1.0", tk.END)
-            self.text_code.tag_add(tk.SEL, start, new_end)
-            self.text_code.mark_set(tk.INSERT, new_end)
-            self.text_code.see(tk.INSERT)
+        lines = text.split('\n')
+        for i in range(len(lines)):
+            if lines[i].startswith('```') or lines[i].startswith('$$'):
+                continue
+            lines[i] = '    ' + lines[i]
+        text = '\n'.join(lines)
+        self.text_code.delete(start, end)
+        self.text_code.insert(start, text)
+        # 保留之前选择行
+        new_end = self.text_code.index(f"{start}+{len(text)}c")
+        self.text_code.tag_remove(tk.SEL, "1.0", tk.END)
+        self.text_code.tag_add(tk.SEL, start, new_end)
+        self.text_code.mark_set(tk.INSERT, new_end)
+        self.text_code.see(tk.INSERT)
 
     def delete_table(self):
         self.processTextWithSelect(self.text_code, lambda text: text.replace('|', ''))
@@ -637,31 +724,38 @@ class FolderImageBrowser:
     def show_current_image(self):
         if not self.image_paths or self.index < 0:
             return
-
-        img_path = self.image_paths[self.index]
-        try:
-            with Image.open(img_path) as img:
-                self.current_pil_image = img.copy()
-        except Exception as e:
-            messagebox.showerror("错误", f"无法打开图片：\n{img_path}\n\n{e}")
+        image, pos = self.getDisplayImage()
+        if image is None:
             return
-
-        # 按窗口大小等比缩放
+        self.current_pil_image = image
+        img_path = self.image_paths[self.index]
+        # 按画布宽度等比缩放，高度通过滚动查看
         w = max(self.image_canvas.winfo_width(), 300)
         h = max(self.image_canvas.winfo_height(), 200)
-        display_img = self.current_pil_image.copy()
-        display_img.thumbnail((w - 20, h - 20), Image.Resampling.LANCZOS)
-
+        ow, oh = image.size
+        if ow > w:
+            target_w = max(w, 1)
+            target_h = max(int(oh * target_w / max(ow, 1)), 1)
+            display_img = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        else:
+            display_img = image.copy()
         self.current_tk_image = ImageTk.PhotoImage(display_img)
         self.image_canvas.delete("all")
 
         dw, dh = display_img.size
-        ox = (w - dw) // 2
-        oy = (h - dh) // 2
+        ox = 0
+        oy = 0
         self.display_offset = (ox, oy)
         self.display_size = (dw, dh)
         self.image_canvas.create_image(ox, oy, anchor=tk.NW, image=self.current_tk_image)
+        self.image_canvas.configure(scrollregion=(0, 0, dw, dh))
+        self.image_canvas.yview_moveto(0)
+        self._update_image_scrollbar(dh, h)
         self._clear_selection()
+        for idx, p in pos:
+            px = int(p * display_img.height)
+            self.image_canvas.create_line(0, px, display_img.width, px, fill="#00d2ff", width=2)
+            self.image_canvas.create_text(display_img.width - 10, px + 10, text=f"{idx + 1}", fill="#00d2ff")
 
         total = len(self.image_paths)
         self.index_var.set(self.index + 1)
@@ -669,7 +763,7 @@ class FolderImageBrowser:
 
         self.btn_prev.config(state=tk.NORMAL if self.index > 0 else tk.DISABLED)
         self.btn_next.config(state=tk.NORMAL if self.index < total - 1 else tk.DISABLED)
-        self.item = self.ocr.find(img_path)
+        self.item = self.ocr.find(img_path) if self.ocr else None
         if self.item is None:
             self.item = (str(img_path), "", "")
         self.updateText(self.item)
