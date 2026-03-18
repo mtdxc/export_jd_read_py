@@ -1,8 +1,7 @@
-# pip install zai-sdk
-from zai import ZhipuAiClient
 import sys
 import base64
 from pathlib import Path
+import requests
 import os
 from markdownify import markdownify as md
 import sqlite3
@@ -29,7 +28,7 @@ class ZaiOcr:
     def __init__(self, api_key = ''):
         if len(api_key) == 0:
             api_key = os.environ.get('ZAI_API_KEY', '')
-        self.client = ZhipuAiClient(api_key=api_key)
+        self.api_key = api_key
         self.cur = None
         self.db = None
         self.db_dir = None
@@ -107,6 +106,7 @@ class ZaiOcr:
     def ocr(self, image):
         image_url = ""
         url = None
+        ret = None
         if isinstance(image, (str, Path)):
             url = image_url = str(image)
             if not image_url.startswith("http://") and not image_url.startswith("https://"):
@@ -138,18 +138,21 @@ class ZaiOcr:
         --header 'Authorization: your_api_key' \
         --header 'Content-Type: application/json' \
         --data-raw '{
-        "model": "glm-ocr",
-        "file": "https://cdn.bigmodel.cn/static/logo/introduction.png"
+          "model": "glm-ocr",
+          "file": "https://cdn.bigmodel.cn/static/logo/introduction.png"
         }'
         """
-        response = self.client.layout_parsing.create(
-            model="glm-ocr",
-            file=image_url
-        )
-
-        # 输出结果 response.md_results.replace("\n\n", "\n")
-        md_results = getattr(response, "md_results", "") or ""
-        ret = md_results.replace("\n\n", "\n")
+        response = requests.post("https://open.bigmodel.cn/api/paas/v4/layout_parsing", 
+            headers={"Authorization": self.api_key}, 
+            json={"model": "glm-ocr", "file": image_url})
+        # 检查响应状态码并解析 JSON 数据
+        if response.status_code == 200:
+            data = response.json()
+            # 输出结果 response.md_results.replace("\n\n", "\n")
+            md_results = data.get("md_results", "")
+            ret = md_results.replace("\n\n", "\n")
+        else:
+            print("请求失败，状态码:", response.status_code)
         return [url, ret]
     
     def normalize_code(self, code):

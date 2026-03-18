@@ -3,4 +3,3 @@ requests
 pdfkit
 PyPDF2
 markdownify
-zai-sdk
