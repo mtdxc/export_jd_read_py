@@ -32,6 +32,7 @@ class ZaiOcr:
         self.cur = None
         self.db = None
         self.db_dir = None
+        self.pattern = re.compile(r'\b(if|else|for|while|uint|void|function|def|class|import|return|switch|case|break|continue|try|catch|finally|var|let|const|public|private|static)\b')
 
     def normalize_db_path(self, path):
         """将传入路径转为相对db_dir的路径，并统一使用/分隔符。"""
@@ -179,7 +180,7 @@ class ZaiOcr:
             code = raw
         else:
             # 采用关键字判断代码
-            if re.search(r'\b(if|else|for|while|uint|void|function|def|class|import|return|switch|case|break|continue|try|catch|finally|var|let|const|public|private|static)\b', raw):
+            if self.pattern.search(raw):
                 raw = self.normalize_code(raw)
                 code = '```\n' + raw + '\n```'
         ret = (url, raw, code)
