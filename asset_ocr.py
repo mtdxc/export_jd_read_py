@@ -17,7 +17,8 @@ if importlib.util.find_spec("PIL") is None:
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
-
+from queue import Queue, Empty
+import threading
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
 
 class FolderImageBrowser:
@@ -29,10 +30,11 @@ class FolderImageBrowser:
 
         self.image_paths = []
         self.index = -1
+        self._resize_after_id = None
         self.current_tk_image = None
         self.current_pil_image = None
         self.ocr = None
-        self.item = None
+        self.item = ['','','']
         self.dir = None
         self.md_file = None
         self.selection_rect_id = None
@@ -43,7 +45,10 @@ class FolderImageBrowser:
         self.selection_bbox_image = None
         self.display_offset = (0, 0)
         self.display_size = (0, 0)
-
+        self.works = Queue()
+        self.ui_works = Queue()
+        threading.Thread(target=self.doWorks, daemon=True).start()  # 异步初始化 OCR，避免界面卡顿
+        self.root.after(50, self._drain_ui_works)
         # 顶部操作区
         top = tk.Frame(root)
         top.pack(fill=tk.X, padx=8, pady=8)
@@ -168,6 +173,33 @@ class FolderImageBrowser:
         self.root.bind("<Control-Left>", lambda e: self.prev_image(self.next_count_var.get()))
         self.root.bind("<Control-Right>", lambda e: self.next_image(self.next_count_var.get()))
         self.root.bind("<Configure>", self._on_resize)
+
+    def doWorks(self):
+        while True:
+            try:
+                work = self.works.get(timeout=0.1)
+                work()
+            except Empty:
+                continue
+            except Exception as e:
+                print(f"执行任务时发生错误: {str(e)}", file=sys.stderr)
+
+    def addWork(self, func):
+        self.works.put(func)
+
+    def run_on_ui(self, func, *args, **kwargs):
+        self.ui_works.put((func, args, kwargs))
+
+    def _drain_ui_works(self):
+        try:
+            while True:
+                func, args, kwargs = self.ui_works.get_nowait()
+                func(*args, **kwargs)
+        except Empty:
+            pass
+        except Exception as e:
+            print(f"执行UI任务时发生错误: {str(e)}", file=sys.stderr)
+        self.root.after(50, self._drain_ui_works)
 
     def getDisplayImage(self):
         if self.index < 0 or self.index >= len(self.image_paths):
@@ -568,7 +600,8 @@ class FolderImageBrowser:
             print(f"删除记录: {img_path}")
             self.ocr.remove(img_path)
 
-        self.item = (str(img_path), '', '')
+        self.item[1] = ''
+        self.item[2] = ''
         self.updateText(self.item)
         self.root.focus()  # 删除后焦点回到窗口，避免误触文本编辑框快捷键
 
@@ -577,34 +610,49 @@ class FolderImageBrowser:
             return
         if self.index < 0 or self.index >= len(self.image_paths):
             return
-        max_size = 2500
+        max_size = 2000
         merge = self.current_pil_image # self.getDisplayImage()  # 获取合并后的大图进行 OCR 识别
         if merge is None:
             return
         if (merge.width > max_size or merge.height > max_size):
             scale = min(max_size / merge.width, max_size / merge.height)
+            print(f"图片过大{merge.width}x{merge.height}，缩放到 {scale:.2f} 进行 OCR 识别")
             merge = merge.resize((int(merge.width * scale), int(merge.height * scale)), Image.Resampling.LANCZOS)
-        item = self.ocr.ocr_code(merge)
-        # print(f"进行多图识别，原图大小: {merge.size} 识别结果: {item}")
-        if item:
-            self.updateText(item)
-            end = self._get_end_index()
-            for index in range(self.index + 1, end):
-                img_path = str(self.image_paths[index])
-                self.ocr.update((img_path, '', '``'))
+        image_path = str(self.image_paths[self.index])
+        index = self.index
+        end = self._get_end_index()
+        def ocr_done(code):
+            item = self.ocr.analyze(code, image_path)
+            if self.index == index:
+                self.updateText(item)
+            for i in range(index+1, end):
+                img_path = str(self.image_paths[i])
+                self.ocr.update([img_path, '', '``'])
+        self.addWork(lambda: self.run_on_ui(ocr_done, self.ocr.ocr(merge)))
 
     def recognize_image(self):
         if self.index < 0 or self.index >= len(self.image_paths):
             return
-
-        img_path = str(self.image_paths[self.index])
+        if self.ocr is None:
+            return
+        image_path = str(self.image_paths[self.index])
         # 调用 OCR 接口识别图片中的文字
-        if self.ocr:
-            if not self.selection_bbox_image:
-                self.updateText(self.ocr.ocr_code(img_path))
-            elif self.current_pil_image:
-                cropped = self.current_pil_image.crop(self.selection_bbox_image)
-                self.updateText(self.ocr.ocr_code(cropped))
+        img = image_path
+        if self.current_pil_image and self.selection_bbox_image:
+            img = self.current_pil_image.crop(self.selection_bbox_image)
+        else:
+            with Image.open(image_path) as opened:
+                img = opened.copy()
+        if img.width > 1024 or img.height > 1024:
+            scale = min(1024 / img.width, 1024 / img.height)
+            print(f"图片过大{img.width}x{img.height}，缩放到 {scale:.2f} 进行 OCR 识别")
+            img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
+        index = self.index
+        def ocr_done(code):
+            item = self.ocr.analyze(code, image_path)
+            if self.index == index:
+                self.updateText(item)
+        self.addWork(lambda: self.run_on_ui(ocr_done, self.ocr.ocr(img)))
 
     def updateText(self, item):
         self.text_ocr.delete(1.0, tk.END)
@@ -717,9 +765,11 @@ class FolderImageBrowser:
         # Text 组件的 tk.END 会包含末尾换行，使用 end-1c 便于稳定比较。
         ocr = self.text_ocr.get(1.0, "end-1c")
         code = self.text_code.get(1.0, "end-1c")
-        if self.item and (ocr != self.item[1] or code != self.item[2]):
+        if ocr != self.item[1] or code != self.item[2]:
             print(f"更新记录: {self.item} {ocr} {code}")
-            self.ocr.update((img_path, ocr, code))
+            self.item[1] = ocr
+            self.item[2] = code
+            self.ocr.update(self.item)
             return True
         return False
         
@@ -759,13 +809,16 @@ class FolderImageBrowser:
             self.image_canvas.create_line(0, px, display_img.width, px, fill="#00d2ff", width=2)
             self.image_canvas.create_text(display_img.width - 10, px + 10, text=f"{idx + 1}", fill="#00d2ff")
 
-        total = len(self.image_paths)
         self.index_var.set(self.index + 1)
         self.status_var.set(img_path.name)
-
-        self.item = self.ocr.find(img_path) if self.ocr else None
-        if self.item is None:
-            self.item = (str(img_path), "", "")
+        item = self.ocr.find(img_path) if self.ocr else None
+        self.item[0] = str(img_path)
+        if item:
+            self.item[1] = item[1]
+            self.item[2] = item[2]
+        else:
+            self.item[1] = ''
+            self.item[2] = ''
         self.updateText(self.item)
 
     def prev_image(self, delta = 1):
@@ -797,7 +850,13 @@ class FolderImageBrowser:
             messagebox.showwarning("提示", "请输入有效的数字序号")
 
     def _on_resize(self, _event):
-        # 窗口尺寸变化时刷新当前图片显示
+        # 窗口尺寸变化触发频繁，这里使用防抖避免反复重绘导致卡顿。
+        if self._resize_after_id is not None:
+            self.root.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.root.after(120, self._refresh_after_resize)
+
+    def _refresh_after_resize(self):
+        self._resize_after_id = None
         if self.image_paths and self.index >= 0:
             self.show_current_image()
 

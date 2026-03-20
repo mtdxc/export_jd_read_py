@@ -80,8 +80,8 @@ class ZaiOcr:
 
     def update(self, item):
         if self.cur:
-            url = self.normalize_db_path(item[0])
-            self.cur.execute("INSERT OR REPLACE INTO ocr(url, raw, code) VALUES (?, ?, ?)", (url, item[1], item[2]))
+            item[0] = self.normalize_db_path(item[0])
+            self.cur.execute("INSERT OR REPLACE INTO ocr(url, raw, code) VALUES (?, ?, ?)", item)
             self.db.commit()
 
 
@@ -106,27 +106,24 @@ class ZaiOcr:
     
     def ocr(self, image):
         image_url = ""
-        url = None
         ret = None
         if isinstance(image, (str, Path)):
-            url = image_url = str(image)
+            image_url = str(image)
             if not image_url.startswith("http://") and not image_url.startswith("https://"):
                 # Local file path: read and convert to data URI.
                 path = Path(image_url)
                 if not path.exists():
                     raise FileNotFoundError(f"File not found: {path}")
-                if path.is_absolute() and self.db_dir and url.startswith(self.db_dir):
-                    url = url[len(self.db_dir):]
-                url = url.replace("\\", "/")
                 file_bytes = path.read_bytes()
                 b64 = base64.b64encode(file_bytes).decode("utf-8")
                 mime = _sniff_mime_from_bytes(file_bytes)
                 image_url = _as_data_uri(mime, b64)
-            print(f"ocr image: {url}")
+            print(f"ocr image: {image}")
         elif hasattr(image, "save"):
             # PIL Image-like object: save to bytes and convert to data URI.
             buf = BytesIO()
             image.save(buf, format="PNG")
+            print(f"ocr image: {image.width}x{image.height}")
             file_bytes = buf.getvalue()
             mime = _sniff_mime_from_bytes(file_bytes)
             image_url = _as_data_uri(mime, base64.b64encode(file_bytes).decode("utf-8"))
@@ -154,7 +151,7 @@ class ZaiOcr:
             ret = md_results.replace("\n\n", "\n")
         else:
             print("请求失败，状态码:", response.status_code)
-        return [url, ret]
+        return ret
     
     def normalize_code(self, code):
         # 这里可以添加更多的正则表达式来处理不同的代码格式问题
@@ -163,10 +160,14 @@ class ZaiOcr:
     def html2md(self, html):
         return md(html, table_infer_header=True)
 
-    def ocr_code(self, image):
-        ret = None
+    def ocr_code(self, image, path=None):
+        ret = self.ocr(image)
+        if not path:
+            path = str(image)
+        return self.analyze(ret, path)
+
+    def analyze(self, raw, path):
         code = ''
-        (url, raw) = self.ocr(image)
         # table替换
         if raw.find('<table') != -1 and raw.find('</table>') != -1:
             code = self.html2md(raw)
@@ -183,8 +184,8 @@ class ZaiOcr:
             if self.pattern.search(raw):
                 raw = self.normalize_code(raw)
                 code = '```\n' + raw + '\n```'
-        ret = (url, raw, code)
-        if url and len(raw):
+        ret = [path, raw, code]
+        if path and len(raw):
             self.update(ret)
         return ret
 
