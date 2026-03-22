@@ -73,7 +73,7 @@ class FolderImageBrowser:
         text_index.bind("<Return>", self.jump_to_index)
 
         # 增加空按钮用于去除编辑框的焦点
-        self.btn_pages = tk.Button(top, text="/", command=lambda: self.root.focus())
+        self.btn_pages = tk.Button(top, text="/")#, command=lambda: self.root.focus())
         self.btn_pages.pack(side=tk.LEFT, padx=(8, 0))
 
         self.status_var = tk.StringVar(value="请选择asset文件夹")
@@ -159,9 +159,6 @@ class FolderImageBrowser:
         self.text_code.config(yscrollcommand=scrollbar_bottom.set)
 
         # 快捷键
-        self.root.bind("<Left>", lambda e: self.prev_image() if not self._focus_in_text_widget() else None)
-        self.root.bind("<Right>", lambda e: self.next_image() if not self._focus_in_text_widget() else None)
-        self.root.bind("<Delete>", lambda e: self.delete_image() if not self._focus_in_text_widget() else None)
         self.root.bind("<Alt-Left>", lambda e: self.prev_image())
         self.root.bind("<Alt-Right>", lambda e: self.next_image())
         self.root.bind("<Alt-Delete>", lambda e: self.delete_image())
@@ -240,10 +237,6 @@ class FolderImageBrowser:
     def _init_ocr(self):
         self.ocr = ZaiOcr()
         self.ocr.initDb("ocr_cache.db")
-
-    def _focus_in_text_widget(self):
-        widget = self.root.focus_get()
-        return isinstance(widget, tk.Text)
 
     def _clear_selection(self):
         if self.selection_rect_id is not None:
