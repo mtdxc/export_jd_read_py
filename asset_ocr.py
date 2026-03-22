@@ -466,13 +466,18 @@ class FolderImageBrowser:
 
     def process_md(self, md_file_path, to_zip, formula):
         imgs = []
+        alts = {}
         snippet = ""
         with open(md_file_path, 'r', encoding='utf-8') as f:
-            snippet = f.read()
-            # 获取markdown中的图片链接
-            imgs = re.findall(r'!\[\]\(([^)]+)\)', snippet, re.MULTILINE)
             # 去重
-            imgs = list(set(imgs))
+            simg = set()
+            snippet = f.read()
+            # 获取图片的alt文本
+            alt_matches = re.findall(r'!\[(.*?)\]\(([^)]+)\)', snippet, re.MULTILINE)
+            for match in alt_matches:
+                alts[match[1]] = match[0] if len(match) > 1 else ""
+                simg.add(match[1])
+            imgs = list(simg)
         if snippet == "":
             messagebox.showwarning("提示", "未找到任何图片链接或文件内容为空。")
             return
@@ -499,10 +504,12 @@ class FolderImageBrowser:
                         raise ValueError(f"跳过公式")
                     if code == "``": # 空注释直接删除图片
                         code = ""
-                    snippet = snippet.replace(f'![]({img})', code)
+                    # 直接替换整个图片标签，避免 alt 文本干扰, 但部分节点会抛异常
+                    #snippet = re.sub(r'!\[.*?\]\(' + re.escape(img) + r'\)', code, snippet)
+                    snippet = snippet.replace(f'![{alts.get(img, "")}]({img})', code)  
                     continue  # 已替换文本，不再添加图片到 ZIP 中
             except Exception as e:
-                print(f"处理图片{pos} {img} 时发生错误: {str(e)}", file=sys.stderr)
+                print(f"处理图片{pos} {img} 时发生错误: {str(e)}")
                 
             # 没有找到 OCR 记录或记录为空，才添加图片到 ZIP 中
             if zf and Path(img).is_file():
@@ -541,7 +548,11 @@ class FolderImageBrowser:
         with open(md_file, 'r', encoding='utf-8') as f:
             snippet = f.read()
             # 获取markdown中的图片链接
-            md_imgs = re.findall(r'!\[\]\(([^)]+)\)', snippet, re.MULTILINE)
+            # !\[(.*?)\]\((.*?)(?:\s+"(.*?)")?\) 
+            # 分组1：alt文本
+            # 分组2：图片URL
+            # 分组3：title（可选）
+            md_imgs = re.findall(r'!\[.*?\]\(([^)]+)\)', snippet, re.MULTILINE)
             print(f"{md_file} 找到 {len(md_imgs)} 张图片链接，正在检查图片文件...")
             simg = set()
             for img in md_imgs: 
