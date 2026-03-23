@@ -170,6 +170,7 @@ class FolderImageBrowser:
         self.root.bind("<Control-Left>", lambda e: self.prev_image(self.next_count_var.get()))
         self.root.bind("<Control-Right>", lambda e: self.next_image(self.next_count_var.get()))
         self.root.bind("<Configure>", self._on_resize)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def doWorks(self):
         while True:
@@ -234,9 +235,23 @@ class FolderImageBrowser:
             end = len(self.image_paths)
         return end
 
-    def _init_ocr(self):
+    def setdir(self, path):
+        if self.ocr: #保存配置项
+            self.ocr.setConfig("index", self.index)
+            self.ocr.setConfig("next_count", self.next_count_var.get())
+            
+        if not path:
+            return
+        self.dir = path
+        os.chdir(self.dir)
         self.ocr = ZaiOcr()
         self.ocr.initDb("ocr_cache.db")
+
+        # 读取配置项
+        index = self.ocr.getConfig("index")
+        self.index = int(index) if index is not None else 0
+        next_count = self.ocr.getConfig("next_count")
+        self.next_count_var.set(int(next_count) if next_count is not None else 1)
 
     def _clear_selection(self):
         if self.selection_rect_id is not None:
@@ -535,8 +550,7 @@ class FolderImageBrowser:
         if not md_file:
             return
         self.md_file = md_file
-        self.dir = os.path.dirname(md_file)
-        os.chdir(self.dir)  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
+        self.setdir(os.path.dirname(md_file))
         imgs = []
         with open(md_file, 'r', encoding='utf-8') as f:
             snippet = f.read()
@@ -565,9 +579,7 @@ class FolderImageBrowser:
         self.btn_pages.config(text=f" / {len(imgs)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
 
-        self._init_ocr()
         self.image_paths = imgs
-        self.index = 0
         self.show_current_image()
 
     def open_folder(self):
@@ -577,7 +589,7 @@ class FolderImageBrowser:
 
         self.dir = os.path.dirname(folder)
         dirname = os.path.basename(folder)
-        os.chdir(self.dir)  # 切换到图片所在目录，确保 OCR 数据库使用相对路径
+        self.setdir(self.dir)
         paths = []
         for p in sorted(Path(dirname).iterdir(), key=lambda x: x.name.lower()):
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS:
@@ -590,9 +602,7 @@ class FolderImageBrowser:
         self.btn_pages.config(text=f" / {len(paths)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
         self.md_file = None  # 切换到文件夹浏览时，重置当前 Markdown 文件状态
-        self._init_ocr()
         self.image_paths = paths
-        self.index = 0
         self.show_current_image()
 
     def delete_image(self):
@@ -864,6 +874,10 @@ class FolderImageBrowser:
         if self.image_paths and self.index >= 0:
             self.show_current_image()
 
+    def on_close(self):
+        self.check_text_changed()
+        self.setdir('')
+        self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()

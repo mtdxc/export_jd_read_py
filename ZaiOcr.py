@@ -52,12 +52,28 @@ class ZaiOcr:
             self.db = sqlite3.connect(db_name)
             self.cur = self.db.cursor()
             self.cur.execute("CREATE TABLE IF NOT EXISTS ocr(url varchar(200) primary key, raw text, code text)")
+            self.cur.execute("CREATE TABLE IF NOT EXISTS config(key varchar primary key, value text)")
             self.upgradeDb()
             return True
         except Exception as e:
             print(str(e))
             return False
-        
+
+    def getConfig(self, key):
+        if self.cur:
+            self.cur.execute("SELECT value FROM config WHERE key=?", (key,))
+            row = self.cur.fetchone()
+            return row[0] if row else None
+        return None
+    def setConfig(self, key, value):
+        if self.cur:
+            self.cur.execute("INSERT OR REPLACE INTO config(key, value) VALUES (?, ?)", (key, value))
+            self.db.commit()
+    def delConfig(self, key):
+        if self.cur:
+            self.cur.execute("DELETE FROM config WHERE key=?", (key,))
+            self.db.commit()
+
     def upgradeDb(self):
         if self.cur and self.db_dir:
             try:
@@ -106,7 +122,7 @@ class ZaiOcr:
     
     def ocr(self, image):
         image_url = ""
-        ret = None
+        ret = ""
         if isinstance(image, (str, Path)):
             image_url = str(image)
             if not image_url.startswith("http://") and not image_url.startswith("https://"):
