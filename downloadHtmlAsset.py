@@ -50,7 +50,7 @@ def getBookAsset(folder, info):
     checkSet = set()
     for item in items:
         full_path = os.path.join(html_folder, item)
-        if os.path.isfile(full_path):
+        if os.path.isfile(full_path) and item.endswith(".html"):
             getHtmlAsset(html_folder, item, full_path, info, checkSet)
 
 

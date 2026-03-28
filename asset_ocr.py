@@ -159,18 +159,40 @@ class FolderImageBrowser:
         self.text_code.config(yscrollcommand=scrollbar_bottom.set)
 
         # 快捷键
-        self.root.bind("<Alt-Left>", lambda e: self.prev_image())
-        self.root.bind("<Alt-Right>", lambda e: self.next_image())
-        self.root.bind("<Alt-Delete>", lambda e: self.delete_image())
-        self.root.bind("<Alt-Up>", lambda e: self.recognize_image())
-        self.root.bind("<Alt-Down>", lambda e: self.addQuate())
-        self.root.bind("<Alt-r>", lambda e: self.recognize_image())
-        self.root.bind("<Alt-v>", lambda e: self.recognize_image2())
-        self.root.bind("<Control-Up>", lambda e: self.recognize_image2())
-        self.root.bind("<Control-Left>", lambda e: self.prev_image(self.next_count_var.get()))
-        self.root.bind("<Control-Right>", lambda e: self.next_image(self.next_count_var.get()))
+        self._bind_shortcuts()
         self.root.bind("<Configure>", self._on_resize)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def _bind_shortcuts(self):
+        # macOS 上补充 Option/Command，其他平台保持 Alt/Control。
+        alt_like_mods = ["Alt"]
+        extra_control_mods = []
+        if sys.platform == "darwin":
+            alt_like_mods.insert(0, "Option")
+            extra_control_mods.append("Command")
+
+        alt_actions = {
+            "Left": lambda e: self.prev_image(),
+            "Right": lambda e: self.next_image(),
+            "Delete": lambda e: self.delete_image(),
+            "Up": lambda e: self.recognize_image(),
+            "Down": lambda e: self.addQuate(),
+            "r": lambda e: self.recognize_image(),
+            "v": lambda e: self.recognize_image2(),
+        }
+        for key, handler in alt_actions.items():
+            for mod in alt_like_mods:
+                self.root.bind(f"<{mod}-{key}>", handler)
+
+        control_actions = {
+            "Up": lambda e: self.recognize_image2(),
+            "Left": lambda e: self.prev_image(self.next_count_var.get()),
+            "Right": lambda e: self.next_image(self.next_count_var.get()),
+        }
+        for key, handler in control_actions.items():
+            self.root.bind(f"<Control-{key}>", handler)
+            for mod in extra_control_mods:
+                self.root.bind(f"<{mod}-{key}>", handler)
 
     def doWorks(self):
         while True:

@@ -12,7 +12,7 @@ COOKIE_FILE = "cookies.json"
 Data_Folder = "./output"
 
 # 需要下载电子书的id列表
-Download_Book_List = [30751446]
+Download_Book_List = [30705072]
 
 
 def save_session(driver, file_path):
@@ -248,8 +248,8 @@ def downloadBook(bookIndex, bookCount, driver: webdriver.Chrome, bookId):
 def main():
     options = webdriver.EdgeOptions()
     options.add_argument("--start-maximized")  # 最大化窗口
-    service = EdgeService(executable_path="d:\msedgedriver.exe")
-    driver = webdriver.Edge(service=service, options=options)
+    #service = EdgeService(executable_path="d:\msedgedriver.exe")
+    driver = webdriver.Edge(options=options)
 
     try:
         if checkLoginData():
