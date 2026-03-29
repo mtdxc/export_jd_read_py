@@ -9,14 +9,18 @@ import sys
 import zipfile
 from pathlib import Path
 from ZaiOcr import ZaiOcr
-import importlib.util
+import io
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
+import importlib.util
 if importlib.util.find_spec("PIL") is None:
     raise SystemExit("缺少依赖 Pillow，请先安装：pip install pillow, 如果是macOS请先使用：brew install python-tk")
 
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 from queue import Queue, Empty
 import threading
 SUPPORTED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff"}
@@ -33,6 +37,10 @@ class FolderImageBrowser:
         self._resize_after_id = None
         self.current_tk_image = None
         self.current_pil_image = None
+        self.current_pos_markers = []
+        self.formula_preview_pil = None
+        self.formula_preview_tk = None
+        self._formula_preview_after_id = None
         self.ocr = None
         self.item = ['','','']
         self.dir = None
@@ -153,6 +161,8 @@ class FolderImageBrowser:
 
         self.text_code = tk.Text(text_bottom_frame, undo=True, wrap=tk.WORD)
         self.text_code.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.text_code.bind("<<Modified>>", self._on_text_code_modified)
+        self.text_code.edit_modified(False)
 
         scrollbar_bottom = tk.Scrollbar(text_bottom_frame, command=self.text_code.yview)
         scrollbar_bottom.pack(side=tk.RIGHT, fill=tk.Y)
@@ -210,6 +220,113 @@ class FolderImageBrowser:
     def run_on_ui(self, func, *args, **kwargs):
         self.ui_works.put((func, args, kwargs))
 
+    def _extract_markdown_formulas(self, text):
+        formulas = []
+
+        # 先提取块公式，避免与行内公式重复匹配。
+        block_pattern = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
+        for m in block_pattern.finditer(text):
+            content = m.group(1).strip()
+            if content:
+                formulas.append(content)
+
+        text_without_blocks = block_pattern.sub(" ", text)
+
+        # 再提取行内公式，排除 $$...$$ 的边界。
+        inline_pattern = re.compile(r"(?<!\\)\$(?!\$)(.+?)(?<!\\)\$(?!\$)", re.DOTALL)
+        for m in inline_pattern.finditer(text_without_blocks):
+            content = m.group(1).strip()
+            if content:
+                formulas.append(content)
+
+        return formulas
+
+    def _normalize_formula_for_preview(self, formula):
+        """将部分不被 matplotlib mathtext 支持的 LaTeX 语法转换为近似可渲染形式。"""
+        normalized = formula
+        # 清理上下标符号前后的空格，兼容如 a _ {i}、x ^ 2 等写法。
+        normalized = re.sub(r"\s*([_^])\s*", r"\1", normalized)
+        return normalized
+
+    def _build_formula_preview(self, formula):
+        try:
+            normalized_formula = self._normalize_formula_for_preview(formula)
+            render_text = f"${normalized_formula}$"
+            fig = plt.figure(figsize=(0.01, 0.01), dpi=160)
+            fig.patch.set_alpha(0)
+            text_artist = fig.text(0, 0, render_text, fontsize=18, color="white")
+            fig.canvas.draw()
+            bbox = text_artist.get_window_extent(renderer=fig.canvas.get_renderer())
+            plt.close(fig)
+
+            width = max(int(bbox.width) + 24, 60)
+            height = max(int(bbox.height) + 20, 30)
+            fig = plt.figure(figsize=(width / 160, height / 160), dpi=160)
+            fig.patch.set_alpha(0)
+            ax = fig.add_axes([0, 0, 1, 1])
+            ax.axis("off")
+            ax.text(0.03, 0.5, render_text, fontsize=18, color="white", va="center", ha="left")
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", transparent=True, bbox_inches="tight", pad_inches=0.05)
+            plt.close(fig)
+            buf.seek(0)
+            return Image.open(buf).convert("RGBA")
+        except Exception as e:
+            font = ImageFont.load_default()
+            # 渲染失败时展示原始公式，避免只显示异常信息。
+            print(e)
+            safe_formula = str(e) #formula if formula else "(empty)"
+            lines = safe_formula.splitlines() or [safe_formula]
+            line_gap = 6
+            line_height = max(font.getbbox("Ag")[3] - font.getbbox("Ag")[1], 1)
+            line_widths = [max(font.getbbox(line)[2] - font.getbbox(line)[0], 1) for line in lines]
+            text_w = max(line_widths) if line_widths else 1
+            text_h = max(len(lines) * line_height + (len(lines) - 1) * line_gap, line_height)
+            img = Image.new("RGBA", (text_w + 24, text_h + 16), (0, 0, 0, 150))
+            drawer = ImageDraw.Draw(img)
+            drawer.multiline_text((12, 8), safe_formula, fill=(255, 255, 255, 255), font=font, spacing=line_gap)
+            return img
+
+    def _build_formulas_preview(self, formulas):
+        previews = []
+        for formula in formulas:
+            img = self._build_formula_preview(formula)
+            if img is not None:
+                previews.append(img)
+
+        if not previews:
+            return None
+        if len(previews) == 1:
+            return previews[0]
+
+        spacing = 8
+        width = max(img.width for img in previews)
+        height = sum(img.height for img in previews) + spacing * (len(previews) - 1)
+        merged = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+
+        y = 0
+        for img in previews:
+            merged.paste(img, (0, y), img)
+            y += img.height + spacing
+        return merged
+
+    def _schedule_formula_preview_update(self):
+        if self._formula_preview_after_id is not None:
+            self.root.after_cancel(self._formula_preview_after_id)
+        self._formula_preview_after_id = self.root.after(180, self._update_formula_preview)
+
+    def _on_text_code_modified(self, _event):
+        if not self.text_code.edit_modified():
+            return
+        self.text_code.edit_modified(False)
+        self._schedule_formula_preview_update()
+
+    def _update_formula_preview(self):
+        self._formula_preview_after_id = None
+        formulas = self._extract_markdown_formulas(self.text_code.get(1.0, "end-1c"))
+        self.formula_preview_pil = self._build_formulas_preview(formulas) if formulas else None
+        self._render_current_canvas()
+
     def _drain_ui_works(self):
         try:
             while True:
@@ -220,6 +337,67 @@ class FolderImageBrowser:
         except Exception as e:
             print(f"执行UI任务时发生错误: {str(e)}", file=sys.stderr)
         self.root.after(50, self._drain_ui_works)
+
+    def _render_current_canvas(self):
+        if self.current_pil_image is None:
+            self.image_canvas.delete("all")
+            self.display_offset = (0, 0)
+            self.display_size = (0, 0)
+            self.image_canvas.configure(scrollregion=(0, 0, 0, 0))
+            self._update_image_scrollbar(0, max(self.image_canvas.winfo_height(), 1))
+            self._clear_selection()
+            return
+
+        image = self.current_pil_image
+        w = max(self.image_canvas.winfo_width(), 300)
+        h = max(self.image_canvas.winfo_height(), 200)
+        ow, oh = image.size
+        if ow > w:
+            target_w = max(w, 1)
+            target_h = max(int(oh * target_w / max(ow, 1)), 1)
+            display_img = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        else:
+            display_img = image.copy()
+
+        self.current_tk_image = ImageTk.PhotoImage(display_img)
+        self.image_canvas.delete("all")
+
+        preview_h = 0
+        preview_w = 0
+        if self.formula_preview_pil is not None:
+            preview_img = self.formula_preview_pil
+            max_preview_w = max(w - 16, 40)
+            if preview_img.width > max_preview_w:
+                scale = max_preview_w / preview_img.width
+                preview_img = preview_img.resize(
+                    (max(int(preview_img.width * scale), 1), max(int(preview_img.height * scale), 1)),
+                    Image.Resampling.LANCZOS,
+                )
+            self.formula_preview_tk = ImageTk.PhotoImage(preview_img)
+            preview_w, preview_h = preview_img.size
+            self.image_canvas.create_image(0, 4, anchor=tk.NW, image=self.formula_preview_tk)
+            preview_h += 8
+        else:
+            self.formula_preview_tk = None
+
+        dw, dh = display_img.size
+        ox = 0
+        oy = preview_h
+        self.display_offset = (ox, oy)
+        self.display_size = (dw, dh)
+        self.image_canvas.create_image(ox, oy, anchor=tk.NW, image=self.current_tk_image)
+
+        for idx, p in self.current_pos_markers:
+            py = oy + int(p * display_img.height)
+            self.image_canvas.create_line(0, py, display_img.width, py, fill="#00d2ff", width=2)
+            self.image_canvas.create_text(display_img.width - 10, py + 10, text=f"{idx + 1}", fill="#00d2ff")
+
+        region_w = max(dw, preview_w)
+        region_h = oy + dh
+        self.image_canvas.configure(scrollregion=(0, 0, region_w, region_h))
+        self.image_canvas.yview_moveto(0)
+        self._update_image_scrollbar(region_h, h)
+        self._clear_selection()
 
     def getDisplayImage(self):
         if self.index < 0 or self.index >= len(self.image_paths):
@@ -699,6 +877,8 @@ class FolderImageBrowser:
             self.item = item
         self.text_ocr.insert(tk.END, item[1])
         self.text_code.insert(tk.END, item[2])
+        self.text_code.edit_modified(False)
+        self._schedule_formula_preview_update()
 
     def html2md(self):
         ocr = self.text_ocr.get(1.0, "end-1c")
@@ -818,34 +998,9 @@ class FolderImageBrowser:
         if image is None:
             return
         self.current_pil_image = image
+        self.current_pos_markers = pos
         img_path = self.image_paths[self.index]
-        # 按画布宽度等比缩放，高度通过滚动查看
-        w = max(self.image_canvas.winfo_width(), 300)
-        h = max(self.image_canvas.winfo_height(), 200)
-        ow, oh = image.size
-        if ow > w:
-            target_w = max(w, 1)
-            target_h = max(int(oh * target_w / max(ow, 1)), 1)
-            display_img = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
-        else:
-            display_img = image.copy()
-        self.current_tk_image = ImageTk.PhotoImage(display_img)
-        self.image_canvas.delete("all")
-
-        dw, dh = display_img.size
-        ox = 0
-        oy = 0
-        self.display_offset = (ox, oy)
-        self.display_size = (dw, dh)
-        self.image_canvas.create_image(ox, oy, anchor=tk.NW, image=self.current_tk_image)
-        self.image_canvas.configure(scrollregion=(0, 0, dw, dh))
-        self.image_canvas.yview_moveto(0)
-        self._update_image_scrollbar(dh, h)
-        self._clear_selection()
-        for idx, p in pos:
-            px = int(p * display_img.height)
-            self.image_canvas.create_line(0, px, display_img.width, px, fill="#00d2ff", width=2)
-            self.image_canvas.create_text(display_img.width - 10, px + 10, text=f"{idx + 1}", fill="#00d2ff")
+        self._render_current_canvas()
 
         self.index_var.set(self.index + 1)
         self.status_var.set(img_path.name)
@@ -895,10 +1050,12 @@ class FolderImageBrowser:
 
     def _refresh_after_resize(self):
         self._resize_after_id = None
-        if self.image_paths and self.index >= 0:
-            self.show_current_image()
+        if self.current_pil_image is not None:
+            self._render_current_canvas()
 
     def on_close(self):
+        self._resize_after_id = None
+        self._formula_preview_after_id = None
         self.check_text_changed()
         self.setdir('')
         self.root.destroy()

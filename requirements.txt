@@ -3,3 +3,4 @@ requests
 pdfkit
 PyPDF2
 markdownify
+matplotlib
