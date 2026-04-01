@@ -34,6 +34,7 @@ class FolderImageBrowser:
 
         self.image_paths = []
         self.index = -1
+        self.ocr_index = -1
         self._resize_after_id = None
         self.current_tk_image = None
         self.current_pil_image = None
@@ -871,6 +872,9 @@ class FolderImageBrowser:
             return
         if self.index < 0 or self.index >= len(self.image_paths):
             return
+        if self.index == self.ocr_index:
+            return  # 避免重复识别同一张图片
+        self.ocr_index = self.index
         max_size = 2000
         merge = self.current_pil_image # self.getDisplayImage()  # 获取合并后的大图进行 OCR 识别
         if merge is None:
@@ -882,7 +886,9 @@ class FolderImageBrowser:
         image_path = str(self.image_paths[self.index])
         index = self.index
         end = self._get_end_index()
+        print(f"开始识别 {index}-{end} : {image_path} ...")
         def ocr_done(code):
+            print(f"完成识别 {index} : {image_path} ...")
             item = self.ocr.analyze(code, image_path)
             if self.index == index:
                 self.updateText(item)
@@ -892,10 +898,13 @@ class FolderImageBrowser:
         self.addWork(lambda: self.run_on_ui(ocr_done, self.ocr.ocr(merge)))
 
     def recognize_image(self):
-        if self.index < 0 or self.index >= len(self.image_paths):
-            return
         if self.ocr is None:
             return
+        if self.index < 0 or self.index >= len(self.image_paths):
+            return
+        if self.index == self.ocr_index:
+            return  # 避免重复识别同一张图片
+        self.ocr_index = self.index
         image_path = str(self.image_paths[self.index])
         # 调用 OCR 接口识别图片中的文字
         img = image_path
@@ -909,7 +918,9 @@ class FolderImageBrowser:
             print(f"图片过大{img.width}x{img.height}，缩放到 {scale:.2f} 进行 OCR 识别")
             img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
         index = self.index
+        print(f"开始识别 {index} : {image_path} ...")
         def ocr_done(code):
+            print(f"完成识别 {index} : {image_path} ...")
             item = self.ocr.analyze(code, image_path)
             if self.index == index:
                 self.updateText(item)
@@ -1048,7 +1059,7 @@ class FolderImageBrowser:
         self.current_pos_markers = pos
         img_path = self.image_paths[self.index]
         self._render_current_canvas()
-
+        self.ocr_index = -1
         self.index_var.set(self.index + 1)
         self.status_var.set(img_path.name)
         item = self.ocr.find(img_path) if self.ocr else None
