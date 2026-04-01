@@ -953,7 +953,7 @@ class FolderImageBrowser:
         ocr = self.text_ocr.get(1.0, "end-1c")
         if ocr.startswith('## '):
             ocr = ocr[3:]  # 去掉一级标题标记
-        if ocr.startswith('$') and ocr.endswith('$'):
+        if ocr.startswith('$') and ocr.find('$', 1) != -1:
             pass
         else:
             if not ocr.startswith('```'):

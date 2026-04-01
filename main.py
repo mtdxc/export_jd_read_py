@@ -12,7 +12,7 @@ COOKIE_FILE = "cookies.json"
 Data_Folder = "./output"
 
 # 需要下载电子书的id列表
-Download_Book_List = [30705072]
+Download_Book_List = [30231168]
 
 
 def save_session(driver, file_path):
