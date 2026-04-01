@@ -37,14 +37,16 @@ class FolderImageBrowser:
         self._resize_after_id = None
         self.current_tk_image = None
         self.current_pil_image = None
-        self.current_pos_markers = []
         self.formula_preview_pil = None
         self.formula_preview_tk = None
         self._formula_preview_after_id = None
+
         self.ocr = None
         self.item = ['','','']
         self.dir = None
         self.md_file = None
+
+        self.current_pos_markers = []
         self.selection_rect_id = None
         self.drag_start = None
         self.drag_mode = None
@@ -53,10 +55,12 @@ class FolderImageBrowser:
         self.selection_bbox_image = None
         self.display_offset = (0, 0)
         self.display_size = (0, 0)
+
         self.works = Queue()
         self.ui_works = Queue()
         threading.Thread(target=self.doWorks, daemon=True).start()  # 异步初始化 OCR，避免界面卡顿
         self.root.after(50, self._drain_ui_works)
+
         # 顶部操作区
         top = tk.Frame(root)
         top.pack(fill=tk.X, padx=8, pady=8)
@@ -87,6 +91,9 @@ class FolderImageBrowser:
         self.status_var = tk.StringVar(value="请选择asset文件夹")
         self.status_label = tk.Label(top, textvariable=self.status_var, anchor="w")
         self.status_label.pack(side=tk.LEFT, padx=12, fill=tk.X, expand=True)
+        self.works_count_var = tk.StringVar(value="works队列: 0")
+        self.works_count_label = tk.Label(top, textvariable=self.works_count_var, anchor="e", width=10)
+        self.works_count_label.pack(side=tk.RIGHT, padx=(8, 0))
 
         # 图片与文本并排显示区（支持拖拽分割）
         self.content_pane = tk.PanedWindow(
@@ -221,6 +228,7 @@ class FolderImageBrowser:
 
     def addWork(self, func):
         self.works.put(func)
+        self.works_count_var.set(f"works队列: {self.works.qsize()}")
 
     def run_on_ui(self, func, *args, **kwargs):
         self.ui_works.put((func, args, kwargs))
@@ -361,6 +369,7 @@ class FolderImageBrowser:
             pass
         except Exception as e:
             print(f"执行UI任务时发生错误: {str(e)}", file=sys.stderr)
+        self.works_count_var.set(f"works队列: {self.works.qsize()}")
         self.root.after(50, self._drain_ui_works)
 
     def _render_current_canvas(self):
@@ -462,18 +471,30 @@ class FolderImageBrowser:
 
     def setdir(self, path):
         if self.ocr: #保存配置项
-            self.ocr.setConfig("index", self.index)
+            key = "index"
+            if self.md_file:
+                key += "_" + os.path.basename(self.md_file)
+            self.ocr.setConfig(key, self.index)
             self.ocr.setConfig("next_count", self.next_count_var.get())
             
         if not path:
             return
-        self.dir = path
+        if path.lower().endswith(".md"):
+            self.md_file = path
+            self.dir = os.path.dirname(path)
+        else:
+            self.md_file = None
+            self.dir = path
         os.chdir(self.dir)
+
         self.ocr = ZaiOcr()
         self.ocr.initDb("ocr_cache.db")
 
         # 读取配置项
-        index = self.ocr.getConfig("index")
+        key = "index"
+        if self.md_file:
+            key += "_" + os.path.basename(self.md_file)
+        index = self.ocr.getConfig(key)
         self.index = int(index) if index is not None else 0
         next_count = self.ocr.getConfig("next_count")
         self.next_count_var.set(int(next_count) if next_count is not None else 1)
@@ -774,8 +795,8 @@ class FolderImageBrowser:
         )
         if not md_file:
             return
-        self.md_file = md_file
-        self.setdir(os.path.dirname(md_file))
+
+        self.setdir(md_file)
         imgs = []
         with open(md_file, 'r', encoding='utf-8') as f:
             snippet = f.read()
@@ -803,7 +824,8 @@ class FolderImageBrowser:
 
         self.btn_pages.config(text=f" / {len(imgs)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
-
+        if self.index >= len(imgs):
+            self.index = 0
         self.image_paths = imgs
         self.show_current_image()
 
@@ -812,9 +834,8 @@ class FolderImageBrowser:
         if not folder:
             return
 
-        self.dir = os.path.dirname(folder)
         dirname = os.path.basename(folder)
-        self.setdir(self.dir)
+        self.setdir(os.path.dirname(folder))
         paths = []
         for p in sorted(Path(dirname).iterdir(), key=lambda x: x.name.lower()):
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS:
@@ -826,7 +847,8 @@ class FolderImageBrowser:
 
         self.btn_pages.config(text=f" / {len(paths)} :")
         self.root.title(f'asset浏览器 - {self.dir}')
-        self.md_file = None  # 切换到文件夹浏览时，重置当前 Markdown 文件状态
+        if self.index >= len(paths):
+            self.index = 0
         self.image_paths = paths
         self.show_current_image()
 
