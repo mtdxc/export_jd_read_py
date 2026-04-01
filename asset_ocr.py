@@ -108,6 +108,11 @@ class FolderImageBrowser:
         tk.Button(image_top_frame, text="多图识别", command=self.recognize_image2).pack(side=tk.LEFT, padx=(5, 0))
         tk.Button(image_top_frame, text="<<", command=lambda: self.prev_image(self.next_count_var.get())).pack(side=tk.LEFT, padx=(8, 0))
         tk.Button(image_top_frame, text=">>", command=lambda: self.next_image(self.next_count_var.get())).pack(side=tk.LEFT)
+        self.chk_formula_preview = tk.IntVar(value=1)
+        tk.Checkbutton(image_top_frame, text="预览公式",
+            variable=self.chk_formula_preview,
+            command=self._on_formula_preview_toggle,
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
         self.image_canvas = tk.Canvas(image_frame, bg="#1e1e1e", highlightthickness=0)
         self.image_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -313,7 +318,23 @@ class FolderImageBrowser:
     def _schedule_formula_preview_update(self):
         if self._formula_preview_after_id is not None:
             self.root.after_cancel(self._formula_preview_after_id)
+        if not self.chk_formula_preview.get():
+            if self.formula_preview_pil is not None:
+                self.formula_preview_pil = None
+                self._render_current_canvas()
+            return
         self._formula_preview_after_id = self.root.after(180, self._update_formula_preview)
+
+    def _on_formula_preview_toggle(self):
+        if self.chk_formula_preview.get():
+            self._schedule_formula_preview_update()
+            return
+        if self._formula_preview_after_id is not None:
+            self.root.after_cancel(self._formula_preview_after_id)
+            self._formula_preview_after_id = None
+        if self.formula_preview_pil is not None:
+            self.formula_preview_pil = None
+            self._render_current_canvas()
 
     def _on_text_code_modified(self, _event):
         if not self.text_code.edit_modified():
@@ -323,6 +344,10 @@ class FolderImageBrowser:
 
     def _update_formula_preview(self):
         self._formula_preview_after_id = None
+        if not self.chk_formula_preview.get():
+            self.formula_preview_pil = None
+            self._render_current_canvas()
+            return
         formulas = self._extract_markdown_formulas(self.text_code.get(1.0, "end-1c"))
         self.formula_preview_pil = self._build_formulas_preview(formulas) if formulas else None
         self._render_current_canvas()
