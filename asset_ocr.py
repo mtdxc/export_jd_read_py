@@ -157,6 +157,8 @@ class FolderImageBrowser:
         tk.Button(text_button_frame, text="html2md", command=self.html2md).pack(side=tk.LEFT, padx=(8, 0))
         tk.Button(text_button_frame, text="```", command=self.addQuate).pack(side=tk.LEFT)
         tk.Button(text_button_frame, text="del 1.", command=self.delete_lineNo).pack(side=tk.LEFT)
+        tk.Button(text_button_frame, text="^", command=lambda: self.copyText(self.text_code, self.text_ocr)).pack(side=tk.LEFT)
+        tk.Button(text_button_frame, text="v", command=lambda: self.copyText(self.text_ocr, self.text_code)).pack(side=tk.LEFT)
 
         tk.Button(text_button_frame, text="Pad", command=self.addPadding).pack(side=tk.LEFT, padx=(8, 0))
         tk.Button(text_button_frame, text="del |", command=self.delete_table).pack(side=tk.LEFT)
@@ -959,6 +961,11 @@ class FolderImageBrowser:
         new_content = func(content)
         text_widget.delete(start, end)
         text_widget.insert(start, new_content)
+
+    def copyText(self, src: tk.Text, dst: tk.Text):
+        content, _, _ = self._get_selected_or_all(src)
+        dst.delete(1.0, tk.END)
+        dst.insert(tk.END, content)
 
     def addQuate(self):
         ocr = self.text_ocr.get(1.0, "end-1c")
