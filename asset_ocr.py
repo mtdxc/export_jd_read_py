@@ -196,24 +196,24 @@ class FolderImageBrowser:
             alt_like_mods.insert(0, "Option")
             extra_control_mods.append("Command")
 
-        alt_actions = {
+        control_actions = {
             "Left": lambda e: self.prev_image(),
             "Right": lambda e: self.next_image(),
             "Delete": lambda e: self.delete_image(),
             "Up": lambda e: self.recognize_image(),
             "Down": lambda e: self.addQuate(),
-            "r": lambda e: self.recognize_image(),
-            "v": lambda e: self.recognize_image2(),
+        }
+        alt_actions = {
+            "Up": lambda e: self.recognize_image2(),
+            "Left": lambda e: self.prev_image(self.next_count_var.get()),
+            "Right": lambda e: self.next_image(self.next_count_var.get()),
+            "Delete": lambda e: self.delete_image(),
+            "Down": lambda e: self.addQuate(),
         }
         for key, handler in alt_actions.items():
             for mod in alt_like_mods:
                 self.root.bind(f"<{mod}-{key}>", handler)
 
-        control_actions = {
-            "Up": lambda e: self.recognize_image2(),
-            "Left": lambda e: self.prev_image(self.next_count_var.get()),
-            "Right": lambda e: self.next_image(self.next_count_var.get()),
-        }
         for key, handler in control_actions.items():
             self.root.bind(f"<Control-{key}>", handler)
             for mod in extra_control_mods:
@@ -874,9 +874,10 @@ class FolderImageBrowser:
             return
         if self.index < 0 or self.index >= len(self.image_paths):
             return
-        if self.index == self.ocr_index:
+        next_count = self.next_count_var.get() - 1
+        if self.index + next_count == self.ocr_index:
             return  # 避免重复识别同一张图片
-        self.ocr_index = self.index
+        self.ocr_index = self.index + next_count
         max_size = 2000
         merge = self.current_pil_image # self.getDisplayImage()  # 获取合并后的大图进行 OCR 识别
         if merge is None:
